@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+
+from obs_captions.config import AppConfig, OverlayConfig
+from obs_captions.pipeline import CaptionSnapshot, CaptionState
+from obs_captions.server.hub import Hub
+from obs_captions.server.overlay_style import overlay_css_variables
+
+
+def caption_state_to_message(snapshot: CaptionSnapshot) -> dict[str, Any]:
+    return {
+        "type": "caption",
+        "partial": snapshot.partial,
+        "committed": list(snapshot.committed),
+    }
+
+
+def wire_caption_state(
+    state: CaptionState,
+    hub: Hub,
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> None:
+    target_loop = loop or asyncio.get_running_loop()
+
+    def on_change(snapshot: CaptionSnapshot) -> None:
+        message = caption_state_to_message(snapshot)
+
+        def schedule() -> None:
+            asyncio.create_task(hub.broadcast(message))
+
+        target_loop.call_soon_threadsafe(schedule)
+
+    state.on_change = on_change
+
+
+def create_app(
+    hub: Hub,
+    overlay_dir: str | Path | None,
+    config: AppConfig | OverlayConfig | None = None,
+) -> FastAPI:
+    app = FastAPI()
+    overlay_config = _overlay_config(config)
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket) -> None:
+        await hub.connect(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            await hub.disconnect(websocket)
+
+    @app.get("/overlay-style.css")
+    async def overlay_style_endpoint() -> Response:
+        return Response(overlay_css_variables(overlay_config), media_type="text/css")
+
+    @app.get("/custom.css")
+    async def custom_css_endpoint() -> Response:
+        if overlay_config.custom_css is None:
+            raise HTTPException(status_code=404)
+        custom_path = Path(overlay_config.custom_css)
+        if not custom_path.is_file():
+            raise HTTPException(status_code=404)
+        return Response(custom_path.read_text(encoding="utf-8"), media_type="text/css")
+
+    if overlay_dir is not None:
+        overlay_path = Path(overlay_dir)
+        if overlay_path.exists():
+            app.mount("/", StaticFiles(directory=overlay_path, html=True), name="overlay")
+
+    return app
+
+
+def _overlay_config(config: AppConfig | OverlayConfig | None) -> OverlayConfig:
+    if config is None:
+        return OverlayConfig()
+    if isinstance(config, AppConfig):
+        return config.overlay
+    return config
