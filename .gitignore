@@ -1,0 +1,11 @@
+.venv/
+.env
+config.toml
+__pycache__/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+obs-plugin/build*
+.DS_Store

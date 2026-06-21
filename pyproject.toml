@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obs-captions"
+version = "0.0.1"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "pydantic>=2",
+    "pydantic-settings",
+    "numpy",
+    "sounddevice",
+    "python-dotenv",
+    "click",
+]
+
+[project.optional-dependencies]
+local = ["faster-whisper", "onnxruntime", "silero-vad"]
+openai = ["openai"]
+elevenlabs = ["elevenlabs"]
+obs = ["simpleobsws>=1.2.0"]
+bench = ["psutil>=5.9"]
+
+[project.scripts]
+obs-captions = "obs_captions.cli:cli"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "pytest-cov"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/obs_captions"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-m", "not slow"]
+markers = ["slow: hardware/model integration tests skipped by default"]

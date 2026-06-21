@@ -1,0 +1,69 @@
+engine = "local"          # local | openrouter | replicate | openai | elevenlabs | google | xai
+language = "ko"
+
+[audio]
+device = ""
+samplerate = 16000
+channels = 1
+
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[overlay]
+font_family = "Pretendard, 'Noto Sans KR', sans-serif"
+font_size = 48
+font_weight = 700
+color = "#ffffff"
+partial_color = "#aaaaaa"
+background = "rgba(0,0,0,0.35)"
+outline_width = 2
+outline_color = "#000000"
+shadow = "0 2px 6px rgba(0,0,0,0.6)"
+position = "bottom"
+align = "center"
+max_lines = 3
+line_height = 1.3
+padding = 24
+letter_spacing = 0
+fade_ms = 200
+uppercase = false
+custom_css = ""
+
+[local]
+model_size = "small"
+cpu_threads = 1
+partial_interval_ms = 500
+vad_threshold = 0.5
+min_silence_ms = 500
+
+# Cloud provider options (API keys go in .env, NOT here).
+# Set `engine` above to the provider name and fill the matching key in .env.
+
+[providers.openrouter]
+model = "openai/whisper-large-v3-turbo"
+
+[providers.replicate]
+model = "openai/whisper"
+
+# Realtime streaming providers (M3b):
+
+[providers.openai]            # .env: OPENAI_API_KEY — Realtime transcription (24kHz upsample)
+model = "gpt-realtime-whisper"
+
+[providers.elevenlabs]        # .env: ELEVENLABS_API_KEY — Scribe v2 Realtime (~150ms)
+model = "scribe_v2_realtime"
+
+[providers.xai]               # .env: XAI_API_KEY — Grok grok-transcribe (wss)
+model = "grok-transcribe"
+
+[providers.google]            # mode "gemini": .env GEMINI_API_KEY | mode "speech_v2": service account
+mode = "gemini"
+model = "gemini-3.1-flash-live-preview"
+
+# Path B — obs-websocket v5 → native Text source (run with: --sink obs or --sink both)
+# Password goes in .env as OBS_WS_PASSWORD (never in this file).
+[obs]
+host = "localhost"
+port = 4455
+source_name = "LiveCaptions"
