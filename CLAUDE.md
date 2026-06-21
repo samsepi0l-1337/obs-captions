@@ -16,7 +16,6 @@
 - 2개 이상 독립 작업은 병렬로 위임한다. build/test 등 장시간 작업은 background로 돌린다.
 - 작성(writer) 패스와 리뷰(reviewer/verifier) 패스는 분리한다. 같은 active context에서 self-approve하지 않는다.
 - superpowers와 omc(oh-my-claudecode), omx(oh-my-codex)를 항상 사용한다. 작업 시작 전 필요한 skills와 mcp를 먼저 확인한다.
-- gpt-5.4-mini 모델과 gpt-5.3-codex-spark 모델을 사용한다.
 
 ## Hard Boundaries
 
