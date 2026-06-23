@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from obs_captions.config import AppConfig, OverlayConfig
 from obs_captions.pipeline import CaptionSnapshot, CaptionState
 from obs_captions.server.hub import Hub
 from obs_captions.server.overlay_style import overlay_css_variables
+
+logger = logging.getLogger(__name__)
 
 
 def caption_state_to_message(snapshot: CaptionSnapshot) -> dict[str, Any]:
@@ -28,16 +31,28 @@ def wire_caption_state(
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
     target_loop = loop or asyncio.get_running_loop()
+    tasks: set[asyncio.Task[None]] = set()
 
     def on_change(snapshot: CaptionSnapshot) -> None:
         message = caption_state_to_message(snapshot)
 
         def schedule() -> None:
-            asyncio.create_task(hub.broadcast(message))
+            task = asyncio.create_task(hub.broadcast(message))
+            tasks.add(task)
+            task.add_done_callback(_log_task_exception)
+            task.add_done_callback(tasks.discard)
 
         target_loop.call_soon_threadsafe(schedule)
 
-    state.on_change = on_change
+    state.subscribe(on_change)
+
+
+def _log_task_exception(task: asyncio.Task[Any]) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("background broadcast task failed: %s", exc, exc_info=exc)
 
 
 def create_app(
@@ -50,11 +65,16 @@ def create_app(
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
-        await hub.connect(websocket)
         try:
+            # connect() accepts, registers in _clients, AND sends the initial
+            # snapshot. Keep it inside the try so a failure during the initial
+            # send still routes to disconnect() — no permanently leaked client.
+            await hub.connect(websocket)
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
+            pass
+        finally:
             await hub.disconnect(websocket)
 
     @app.get("/overlay-style.css")

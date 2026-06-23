@@ -68,6 +68,40 @@ def test_on_change_fires_only_when_snapshot_changes():
     ]
 
 
+def test_subscribe_notifies_multiple_subscribers_and_unsubscribe_removes_one():
+    a: list[CaptionSnapshot] = []
+    b: list[CaptionSnapshot] = []
+    state = CaptionState(max_lines=3)
+
+    unsub_a = state.subscribe(a.append)
+    state.subscribe(b.append)
+
+    state.on_partial(partial("가"))
+    assert a == [CaptionSnapshot(committed=[], partial="가")]
+    assert b == [CaptionSnapshot(committed=[], partial="가")]
+
+    unsub_a()
+    state.on_partial(partial("가나"))
+
+    assert a == [CaptionSnapshot(committed=[], partial="가")]
+    assert b == [
+        CaptionSnapshot(committed=[], partial="가"),
+        CaptionSnapshot(committed=[], partial="가나"),
+    ]
+
+
+def test_on_change_param_coexists_with_subscribe():
+    via_param: list[CaptionSnapshot] = []
+    via_subscribe: list[CaptionSnapshot] = []
+    state = CaptionState(max_lines=3, on_change=via_param.append)
+    state.subscribe(via_subscribe.append)
+
+    state.on_partial(partial("둘"))
+
+    assert via_param == [CaptionSnapshot(committed=[], partial="둘")]
+    assert via_subscribe == [CaptionSnapshot(committed=[], partial="둘")]
+
+
 def test_local_agreement_returns_common_prefix_for_two_hypotheses():
     assert local_agreement(["안녕", "세상"], ["안녕", "여러분"], n=2) == ["안녕"]
     assert local_agreement(["a", "b", "c"], ["a", "b", "d"], n=2) == ["a", "b"]

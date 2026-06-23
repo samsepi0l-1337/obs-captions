@@ -125,6 +125,8 @@ class ObsTextSink:
         self._connected = False
         self._pending_snapshot: Any | None = None  # CaptionSnapshot at runtime
         self._debounce_task: asyncio.Task[None] | None = None
+        self._unsubscribe: Any | None = None  # () -> None returned by state.subscribe
+        self._pending_tasks: set[asyncio.Future[None]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._max_connect_attempts = max_connect_attempts
         self._sleep_fn = sleep_fn or asyncio.sleep
@@ -183,17 +185,23 @@ class ObsTextSink:
         self._connected = True
         await self._ensure_source_exists()
 
-        # Wire the on_change callback
-        self._state.on_change = self._on_state_change
+        # Subscribe (multi-subscriber safe; does not clobber other subscribers)
+        self._unsubscribe = self._state.subscribe(self._on_state_change)
 
     async def stop(self) -> None:
         """Cancel debounce task, disconnect, unregister callback."""
-        self._state.on_change = None
+        if self._unsubscribe is not None:
+            self._unsubscribe()
+            self._unsubscribe = None
         if self._debounce_task is not None:
             self._debounce_task.cancel()
             try:
                 await self._debounce_task
             except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                # Already surfaced by the _on_task_done done-callback; don't let
+                # a faulted debounce send propagate out of stop().
                 pass
             self._debounce_task = None
         if self._client is not None and self._connected:
@@ -241,11 +249,28 @@ class ObsTextSink:
         """Must be called from the event loop thread."""
         self._pending_snapshot = snapshot
         if self._debounce_s <= 0:
-            asyncio.ensure_future(self._send_snapshot(snapshot))
+            self._track_task(asyncio.ensure_future(self._send_snapshot(snapshot)))
             return
         if self._debounce_task is not None and not self._debounce_task.done():
             self._debounce_task.cancel()
         self._debounce_task = asyncio.ensure_future(self._debounce_send())
+        # Route through the same exception-logging done-callback so a raise from
+        # _send_snapshot during the debounce window is logged when it happens —
+        # not silently swallowed until stop(). CancelledError stays unlogged.
+        self._debounce_task.add_done_callback(self._on_task_done)
+
+    def _track_task(self, task: asyncio.Future[None]) -> None:
+        """Retain a fire-and-forget task ref and log any exception it raises."""
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Future[None]) -> None:
+        # Inspect/log the exception FIRST, then discard from the retention set.
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                logger.error("obs sink background task failed: %s", exc, exc_info=exc)
+        self._pending_tasks.discard(task)
 
     async def _debounce_send(self) -> None:
         try:

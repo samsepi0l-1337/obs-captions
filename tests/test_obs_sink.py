@@ -101,6 +101,12 @@ class FakeWsClient:
 # ---------------------------------------------------------------------------
 
 
+def _partial(text: str):
+    from obs_captions.stt import Transcript
+
+    return Transcript(text=text, is_final=False)
+
+
 def _make_sink(
     client: FakeWsClient,
     *,
@@ -331,6 +337,166 @@ async def test_stop_disconnects_client():
     await sink.stop()
 
     assert client.disconnected
+
+
+@pytest.mark.asyncio
+async def test_start_subscribes_and_stop_unsubscribes_without_clobbering():
+    """start() must subscribe (not clobber on_change); stop() unsubscribes only itself."""
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config)
+    state = CaptionState(max_lines=3)
+
+    other_hits: list[Any] = []
+    state.subscribe(other_hits.append)
+
+    sink = ObsTextSink(state=state, config=app_config, client=client, debounce_ms=0)
+    sink._password = ""
+
+    await sink.start()
+    # Both the pre-existing subscriber and the sink are notified.
+    state.on_partial(_partial("안녕"))
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+    assert other_hits[-1] == CaptionSnapshot(committed=[], partial="안녕")
+    set_calls = [c for c in client.calls if c.requestType == "SetInputSettings"]
+    assert len(set_calls) >= 1
+
+    await sink.stop()
+    # After stop, the OTHER subscriber still fires (sink only removed itself).
+    state.on_partial(_partial("다음"))
+    assert other_hits[-1] == CaptionSnapshot(committed=[], partial="다음")
+
+
+@pytest.mark.asyncio
+async def test_schedule_update_task_exception_surfaced_to_done_callback(caplog):
+    """Fire-and-forget _send_snapshot exceptions must be logged, not swallowed."""
+    import logging
+
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    send_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def boom(_snapshot: Any) -> None:
+        send_started.set()
+        await release.wait()
+        raise RuntimeError("send failed")
+
+    sink._send_snapshot = boom  # type: ignore[assignment]
+
+    with caplog.at_level(logging.ERROR):
+        sink._schedule_update(CaptionSnapshot(committed=[], partial="x"))
+        # While the send is in flight (before it completes) the task ref must be
+        # retained — otherwise asyncio could GC it and lose the exception.
+        await asyncio.wait_for(send_started.wait(), timeout=1.0)
+        assert len(sink._pending_tasks) == 1  # NON-EMPTY while pending
+        release.set()
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+    await sink.stop()
+    # The sink's OWN done-callback must surface it (not asyncio's GC-time default
+    # "Task exception was never retrieved"), so the task ref must be retained.
+    assert sink._pending_tasks == set()  # task ref discarded on done
+    assert any(
+        r.name == "obs_captions.obs_sink" and "obs sink background task failed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_task_done_logs_before_discarding_from_pending_tasks(caplog):
+    """GAP-A: _on_task_done must log the exception BEFORE discarding the task from
+    _pending_tasks. FAILS if discard happens before logger.error is called."""
+    import logging
+
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def boom(_snapshot: Any) -> None:
+        started.set()
+        await release.wait()
+        raise RuntimeError("ordering probe")
+
+    sink._send_snapshot = boom  # type: ignore[assignment]
+
+    tasks_size_at_log_time: list[int] = []
+
+    real_logger = __import__("logging").getLogger("obs_captions.obs_sink")
+
+    original_error = real_logger.error
+
+    def spy_error(msg, *args, **kwargs):
+        # Capture the size of _pending_tasks at the exact moment logger.error fires.
+        tasks_size_at_log_time.append(len(sink._pending_tasks))
+        original_error(msg, *args, **kwargs)
+
+    with caplog.at_level(logging.ERROR):
+        sink._schedule_update(CaptionSnapshot(committed=[], partial="x"))
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        # Task is in _pending_tasks while in-flight — patch now so we capture state
+        # at the moment logger.error is called inside _on_task_done.
+        with patch.object(real_logger, "error", spy_error):
+            release.set()
+            for _ in range(8):
+                await asyncio.sleep(0)
+
+    await sink.stop()
+
+    # The spy must have fired (exception was logged).
+    assert tasks_size_at_log_time, "logger.error was never called — fix not in place"
+    # At log time the task must still be present (log-before-discard ordering).
+    assert tasks_size_at_log_time[0] >= 1, (
+        "task was already discarded before logger.error fired — ordering is wrong"
+    )
+    # After the done-callback completes the set must be empty.
+    assert sink._pending_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_debounce_send_exception_is_logged(caplog):
+    """debounce_ms > 0: a debounce send whose _send_snapshot raises must be LOGGED.
+
+    Defect 1: the debounce path (production default) previously created the task
+    via asyncio.ensure_future with no exception-logging done-callback, so a raise
+    from _send_snapshot was silently swallowed until stop(). This test FAILS if
+    the Defect-1 fix is reverted.
+    """
+    import logging
+
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=10)
+    sink._password = ""
+    await sink.start()
+
+    async def boom(_snapshot: Any) -> None:
+        raise RuntimeError("debounce send failed")
+
+    sink._send_snapshot = boom  # type: ignore[assignment]
+
+    with caplog.at_level(logging.ERROR):
+        sink._schedule_update(CaptionSnapshot(committed=[], partial="x"))
+        # Wait past the debounce window so _debounce_send invokes _send_snapshot.
+        await asyncio.sleep(0.05)
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+    await sink.stop()
+    assert any(
+        r.name == "obs_captions.obs_sink" and "obs sink background task failed" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------
