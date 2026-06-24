@@ -33,6 +33,7 @@ def create_backend(
             model_size=cfg.local.model_size,
             cpu_threads=cfg.local.cpu_threads,
             partial_interval_ms=cfg.local.partial_interval_ms,
+            max_buffer_s=cfg.local.max_buffer_s,
             **common,
         )
 

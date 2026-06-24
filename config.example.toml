@@ -34,6 +34,7 @@ custom_css = ""
 model_size = "small"
 cpu_threads = 1
 partial_interval_ms = 500
+max_buffer_s = 30.0       # rolling re-transcribe window cap (s); bounds partial latency
 vad_threshold = 0.5
 min_silence_ms = 500
 

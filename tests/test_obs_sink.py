@@ -107,6 +107,10 @@ def _partial(text: str):
     return Transcript(text=text, is_final=False)
 
 
+async def _noop_sleep(_seconds: float) -> None:
+    return None
+
+
 def _make_sink(
     client: FakeWsClient,
     *,
@@ -497,6 +501,301 @@ async def test_debounce_send_exception_is_logged(caplog):
         r.name == "obs_captions.obs_sink" and "obs sink background task failed" in r.getMessage()
         for r in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Mid-session reconnect tests (Fix B)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_failure_marks_disconnected_and_reconnects():
+    """A SetInputSettings failure marks the sink disconnected, reconnects, and the
+    next send works again."""
+    fail = {"on": True}
+
+    class FlakyClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings" and fail["on"]:
+                self.calls.append(request)
+                raise OSError("connection lost")
+            return await super().call(request)
+
+    client = FlakyClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    # First send fails -> triggers reconnect.
+    await sink._send_snapshot(CaptionSnapshot(committed=["안녕하세요"], partial="여러분"))
+    # Reconnect re-ran connect; sink is connected again.
+    assert sink._connected is True
+    assert client.identified is True
+
+    # Now allow sends; the next one succeeds.
+    fail["on"] = False
+    await sink._send_snapshot(CaptionSnapshot(committed=["다시"], partial="연결"))
+    set_ok = [
+        c
+        for c in client.calls
+        if c.requestType == "SetInputSettings" and "다시" in c.requestData["inputSettings"]["text"]
+    ]
+    assert set_ok, "send after reconnect did not reach the client"
+
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_overlapping_send_failures_do_not_launch_parallel_reconnects():
+    """Concurrent send failures must coalesce into a single in-flight reconnect."""
+    reconnect_attempts = {"count": 0}
+    gate = asyncio.Event()
+
+    class SlowReconnectClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                raise OSError("down")
+            return await super().call(request)
+
+        async def connect(self) -> bool:
+            # Count only reconnect-driven connects (start() already connected once).
+            if self.connected:
+                reconnect_attempts["count"] += 1
+                await gate.wait()  # hold the reconnect open so both sends overlap
+            self.connected = True
+            return True
+
+    client = SlowReconnectClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    t1 = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["a"], partial=""))
+    )
+    t2 = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["b"], partial=""))
+    )
+    for _ in range(4):
+        await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(t1, t2)
+
+    assert reconnect_attempts["count"] == 1, "parallel reconnect storm"
+
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_respects_max_attempts_and_does_not_raise():
+    """If reconnect can never succeed, the send path stays disconnected, respects
+    max_connect_attempts, and never raises into the caller."""
+    connect_calls = {"count": 0}
+
+    class DeadClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                raise OSError("down")
+            return await super().call(request)
+
+        async def connect(self) -> bool:
+            if self.connected:  # reconnect path
+                connect_calls["count"] += 1
+                raise OSError("still down")
+            self.connected = True
+            return True
+
+    client = DeadClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0, max_connect_attempts=3)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    # Must not raise even though reconnect fails.
+    await sink._send_snapshot(CaptionSnapshot(committed=["x"], partial=""))
+
+    assert sink._connected is False
+    assert connect_calls["count"] == 3  # respected max_connect_attempts
+
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_in_flight_reconnect_and_does_not_reconnect():
+    """B7: stop() during an in-flight reconnect must cancel the reconnect task and
+    leave _connected False — the reconnect must NOT re-open the client stop closed."""
+    gate = asyncio.Event()
+    reconnect_started = asyncio.Event()
+
+    class HangingReconnectClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                raise OSError("down")
+            return await super().call(request)
+
+        async def connect(self) -> bool:
+            if self.connected:  # reconnect path — hang until released
+                reconnect_started.set()
+                await gate.wait()
+            self.connected = True
+            return True
+
+    client = HangingReconnectClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    # Trigger a send failure -> launches the (hanging) reconnect.
+    send = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["x"], partial=""))
+    )
+    await asyncio.wait_for(reconnect_started.wait(), timeout=1.0)
+    assert sink._reconnect_task is not None and not sink._reconnect_task.done()
+
+    # stop() while the reconnect is in flight.
+    await sink.stop()
+
+    assert sink._reconnect_task is None  # cancelled + cleared
+    assert sink._connected is False  # reconnect must NOT have set it True
+    assert client.disconnected is True
+
+    gate.set()
+    await send  # must not raise into the caller
+    # Even after the released connect() body runs, the stopped guard keeps us down.
+    assert sink._connected is False
+
+
+@pytest.mark.asyncio
+async def test_truthy_connect_but_failed_identify_is_not_treated_as_connected():
+    """B2: connect() returns truthy but wait_until_identified() returns False (wrong
+    password / timeout) → the attempt FAILS; the sink must NOT be marked connected."""
+
+    class UnidentifiedClient(FakeWsClient):
+        async def connect(self) -> bool:
+            self.connected = True
+            return True
+
+        async def wait_until_identified(self, timeout: float = 10) -> bool:
+            self.identified = False
+            return False  # auth rejected / timed out
+
+    client = UnidentifiedClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", max_connect_attempts=2)
+    sink._sleep_fn = _noop_sleep
+    sink._password = "wrong"
+
+    with pytest.raises(ConnectionError, match="obs-websocket unreachable"):
+        await sink.start()
+
+    assert sink._connected is False
+
+
+@pytest.mark.asyncio
+async def test_exactly_one_resend_after_reconnect_for_overlapping_failures():
+    """B4: two overlapping send-failures sharing one reconnect must produce EXACTLY
+    ONE post-reconnect SetInputSettings (not one per awaiter)."""
+    gate = asyncio.Event()
+    reconnect_started = asyncio.Event()
+    set_calls_after_reconnect = {"count": 0}
+    reconnected = {"done": False}
+
+    class CountingClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                if reconnected["done"]:
+                    set_calls_after_reconnect["count"] += 1
+                    return FakeResponse(_ok=True, responseData={})
+                # Yield BEFORE failing so both overlapping senders enter the send
+                # path (and both fail) before _connected is flipped — otherwise
+                # the second sender early-returns and never shares the reconnect.
+                await asyncio.sleep(0)
+                raise OSError("down")
+            return await super().call(request)
+
+        async def connect(self) -> bool:
+            if self.connected:  # reconnect path
+                reconnect_started.set()
+                await gate.wait()
+                reconnected["done"] = True
+            self.connected = True
+            return True
+
+    client = CountingClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    t1 = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["a"], partial=""))
+    )
+    t2 = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["b"], partial=""))
+    )
+    await asyncio.wait_for(reconnect_started.wait(), timeout=1.0)
+    gate.set()
+    await asyncio.gather(t1, t2)
+
+    assert set_calls_after_reconnect["count"] == 1, "duplicate post-reconnect send"
+
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_newest_snapshot_during_outage_is_the_one_resent():
+    """B3: a newer snapshot arriving DURING the reconnect outage must be the one
+    re-sent on recovery — not the stale snapshot that triggered the drop."""
+    gate = asyncio.Event()
+    reconnect_started = asyncio.Event()
+    reconnected = {"done": False}
+
+    class WindowClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                if not reconnected["done"]:
+                    raise OSError("down")
+                return FakeResponse(_ok=True, responseData={})
+            return await super().call(request)
+
+        async def connect(self) -> bool:
+            if self.connected:  # reconnect path
+                reconnect_started.set()
+                await gate.wait()
+                reconnected["done"] = True
+            self.connected = True
+            return True
+
+    client = WindowClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._sleep_fn = _noop_sleep
+    sink._password = ""
+    await sink.start()
+
+    send = asyncio.ensure_future(
+        sink._send_snapshot(CaptionSnapshot(committed=["stale"], partial=""))
+    )
+    await asyncio.wait_for(reconnect_started.wait(), timeout=1.0)
+
+    # Newer snapshot arrives while still disconnected (outage window).
+    sink._on_state_change(CaptionSnapshot(committed=["fresh"], partial="latest"))
+
+    gate.set()
+    await send
+
+    set_calls = [c for c in client.calls if c.requestType == "SetInputSettings"]
+    last_text = set_calls[-1].requestData["inputSettings"]["text"]
+    assert "fresh" in last_text and "latest" in last_text, last_text
+    assert "stale" not in last_text, last_text
+
+    await sink.stop()
 
 
 # ---------------------------------------------------------------------------

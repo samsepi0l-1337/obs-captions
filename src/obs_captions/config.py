@@ -32,6 +32,7 @@ class LocalConfig(BaseModel):
     model_size: str = "small"
     cpu_threads: int = 1
     partial_interval_ms: int = 500
+    max_buffer_s: float = 30.0
     vad_threshold: float = 0.5
     min_silence_ms: int = 500
 
