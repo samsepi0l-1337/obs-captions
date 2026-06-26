@@ -42,6 +42,13 @@ obs-captions = "obs_captions.cli:cli"
 dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "pytest-cov"]
 
 [tool.hatch.build.targets.wheel]
+# The static overlay web assets live INSIDE the package
+# (src/obs_captions/web/overlay/overlay.{html,css,js}); hatch ships every file
+# under a package dir, so they are included in the wheel automatically (verified
+# via `uv build` — see obs_captions/web/** in the archive). This makes them
+# importable next to the package (packaging.resolve_web_dir, dev/pip) and
+# bundle-able by PyInstaller. Do NOT add a force-include for them — that
+# double-adds the same paths and hatch errors out.
 packages = ["src/obs_captions"]
 
 [tool.ruff]

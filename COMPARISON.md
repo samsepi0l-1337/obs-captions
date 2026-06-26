@@ -75,7 +75,7 @@
 1. **지연 압도적 우위**: WS 루프백 지연 p50=0.14 ms — Path B 로컬 파이프라인(135 ms)보다 1000× 빠름. 실시간 자막에서 결정적.
 2. **스타일 완전 자유**: 폰트, 색상, 애니메이션, committed/partial 2색 구분 — CSS 한 줄로 변경.
 3. **설정 간단**: OBS에서 URL 붙여넣기만. obs-websocket 활성화·포트·비밀번호 설정 불필요.
-4. **커스텀 CSS 지원**: `web/overlay/custom.css` 또는 `[overlay] custom_css` 경로로 완전 오버라이드.
+4. **커스텀 CSS 지원**: `[overlay] custom_css` 경로(예: 작업 폴더의 `custom.css`)로 완전 오버라이드.
 
 ### Path B가 유리한 이유
 1. **네이티브 렌더링**: CEF(Browser Source)를 거치지 않아 GPU 변동 없음. OBS 네이티브 Text 소스 직접 제어.

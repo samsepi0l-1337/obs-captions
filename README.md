@@ -177,10 +177,10 @@ uppercase     = false
 웹폰트는 `font_family`에 설치된 폰트명을 적거나, 커스텀 CSS(`@font-face`)로 불러옵니다.
 
 ### 2) 완전 커스텀 CSS (`custom.css`)
-노브로 부족하면 **직접 CSS**를 작성합니다. `web/overlay/custom.css`(또는 `[overlay] custom_css = "경로"`)를 두면 기본 스타일 **다음에 로드**되어 무엇이든 덮어쓸 수 있습니다.
+노브로 부족하면 **직접 CSS**를 작성합니다. `[overlay] custom_css = "경로"`로 CSS 파일을 지정하면(예: 작업 폴더의 `custom.css`) 기본 스타일 **다음에 로드**되어 무엇이든 덮어쓸 수 있습니다. (오버레이 정적 에셋 자체는 패키지 안 `src/obs_captions/web/overlay/`로 이동했으므로, 커스텀 CSS는 패키지가 아니라 `custom_css` 경로로 둡니다.)
 
 ```css
-/* web/overlay/custom.css */
+/* custom.css — [overlay] custom_css = "custom.css" 로 지정 */
 @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&display=swap');
 
 .caption        { font-family: 'Black Han Sans', sans-serif; }
@@ -241,6 +241,26 @@ uv run pytest -q -m slow    # 모델 다운로드 포함 통합 테스트(한국
 uv run ruff check .         # 린트
 uv run ruff format .        # 포맷
 ```
+
+## Windows 배포 (PyInstaller)
+
+OBS를 쓰는 일반 사용자에게 Python/uv 설치 없이 **단일 폴더 실행파일**로 배포합니다. 빌드는 **Windows에서** 수행해야 합니다(macOS/Linux에서 만든 번들은 해당 OS용이라 .exe가 아님).
+
+```powershell
+# Windows, 레포 루트에서 (PowerShell)
+.\scripts\build_windows.ps1
+# 또는 (크로스플랫폼 파이썬 래퍼)
+python scripts\build_windows.py
+```
+
+- **출력(onedir)**: `dist\obs-captions\obs-captions.exe` (+ `_internal\` 의존성). onefile 대신 **onedir**를 쓰는 이유는 CUDA/cuDNN DLL 같은 큰 네이티브 의존성에서 훨씬 안정적이고 시작이 빠르기 때문입니다.
+- **CPU 기본 / GPU 옵트인**: 기본 번들은 CPU 전용(작고 NVIDIA 의존성 없음). GPU 가속(NVIDIA)이 필요하면 `python scripts\build_windows.py --gpu`(= `uv sync --extra gpu`)로 빌드하고, `obs_captions.spec`의 **GPU 블록 주석을 해제**해 `nvidia-*` DLL을 번들에 포함시킵니다.
+- **오버레이 에셋 경로**: 정적 오버레이(`overlay.{html,css,js}`)는 패키지 안(`src/obs_captions/web/overlay/`)에 들어 있어 pip 설치·번들 모두에 함께 실려 갑니다. 경로 해석은 `obs_captions/packaging.py`의 `resolve_web_dir()`가 담당합니다(개발/설치: `__file__` 기준, 프리즈: `sys._MEIPASS/obs_captions/web`).
+- **첫 실행 모델 다운로드 vs 오프라인 사전 번들**: 로컬 엔진은 기본적으로 첫 실행 시 HuggingFace에서 Whisper 모델을 내려받습니다(인터넷 필요). 완전 오프라인 배포는 모델을 미리 받아 `obs_captions.spec`의 `datas`에 추가하고 `[local] model`을 그 경로로 지정합니다(스펙 하단 주석 예시 참고).
+- **선택 extra**: 시스템 사운드(WASAPI 루프백) 자막은 `--extra loopback`(`pyaudiowpatch`, Windows 휠만), GPU 가속은 `--extra gpu`. 빌드 스크립트는 `local`+`loopback`을 기본 동기화합니다.
+- **스모크 테스트**: 빌드 스크립트가 마지막에 `obs-captions.exe list-devices`를 실행해 번들이 최소한 오디오 장치를 열거하는지 확인합니다.
+
+> 참고: 이 레포의 macOS/Linux 호스트에서는 실제 .exe 빌드·실행을 검증할 수 없습니다. 경로 해석 로직(`resolve_web_dir`)과 휠 에셋 포함은 단위 테스트/`uv build`로 검증되며, PyInstaller 번들 동작 자체는 Windows 빌드에서 확인해야 합니다.
 
 ## 벤치마크 & 비교
 

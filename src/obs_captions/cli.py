@@ -238,4 +238,8 @@ async def _run_demo_backend(backend: FakeBackend) -> None:
 
 
 def _overlay_dir() -> Path:
-    return Path("web") / "overlay"
+    # Resolve the bundled overlay assets relative to the package (dev/pip) or
+    # the PyInstaller bundle (frozen) — never CWD-relative. See packaging.py.
+    from obs_captions.packaging import resolve_overlay_dir
+
+    return resolve_overlay_dir()

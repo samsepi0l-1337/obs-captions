@@ -9,11 +9,17 @@ from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDiscon
 from fastapi.staticfiles import StaticFiles
 
 from obs_captions.config import AppConfig, OverlayConfig
+from obs_captions.packaging import resolve_overlay_dir
 from obs_captions.pipeline import CaptionSnapshot, CaptionState
 from obs_captions.server.hub import Hub
 from obs_captions.server.overlay_style import overlay_css_variables
 
 logger = logging.getLogger(__name__)
+
+# Sentinel: distinguishes "overlay_dir not provided" (resolve from the package
+# via packaging.resolve_overlay_dir) from an explicit ``None`` ("do not mount
+# static assets" — used by WS-only tests).
+_UNSET = object()
 
 
 def caption_state_to_message(snapshot: CaptionSnapshot) -> dict[str, Any]:
@@ -57,11 +63,14 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
 
 def create_app(
     hub: Hub,
-    overlay_dir: str | Path | None,
+    overlay_dir: str | Path | None = _UNSET,  # type: ignore[assignment]
     config: AppConfig | OverlayConfig | None = None,
 ) -> FastAPI:
     app = FastAPI()
     overlay_config = _overlay_config(config)
+    # Default to the package-resolved overlay dir; explicit ``None`` skips the mount.
+    if overlay_dir is _UNSET:
+        overlay_dir = resolve_overlay_dir()
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:

@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 from obs_captions.pipeline import CaptionSnapshot, CaptionState
 from obs_captions.config import AppConfig, OverlayConfig
+from obs_captions.packaging import resolve_overlay_dir
 from obs_captions.server.app import caption_state_to_message, create_app, wire_caption_state
 from obs_captions.server.overlay_style import overlay_css_variables
 from obs_captions.server.hub import Hub
@@ -165,8 +166,7 @@ async def test_scheduled_broadcast_exception_is_surfaced_to_done_callback(caplog
     # Must be surfaced by our own done-callback (named logger + specific message),
     # not asyncio's GC-time "Task exception was never retrieved" default handler.
     assert any(
-        r.name == "obs_captions.server.app"
-        and "background broadcast task failed" in r.getMessage()
+        r.name == "obs_captions.server.app" and "background broadcast task failed" in r.getMessage()
         for r in caplog.records
     )
 
@@ -316,7 +316,7 @@ def test_overlay_css_variables_maps_config_knobs():
 
 
 def test_overlay_html_contains_dom_and_style_links():
-    app = create_app(Hub(), overlay_dir="web/overlay", config=AppConfig())
+    app = create_app(Hub(), overlay_dir=resolve_overlay_dir(), config=AppConfig())
 
     with TestClient(app) as client:
         response = client.get("/overlay.html")
@@ -335,7 +335,7 @@ def test_overlay_html_contains_dom_and_style_links():
 def test_overlay_style_css_route_uses_current_config():
     app = create_app(
         Hub(),
-        overlay_dir="web/overlay",
+        overlay_dir=resolve_overlay_dir(),
         config=AppConfig(overlay=OverlayConfig(font_size=72)),
     )
 
@@ -353,7 +353,7 @@ def test_custom_css_route_serves_configured_file(tmp_path):
     custom_css.write_text(".caption { color: red; }", encoding="utf-8")
     app = create_app(
         Hub(),
-        overlay_dir="web/overlay",
+        overlay_dir=resolve_overlay_dir(),
         config=AppConfig(overlay=OverlayConfig(custom_css=str(custom_css))),
     )
 
@@ -366,7 +366,7 @@ def test_custom_css_route_serves_configured_file(tmp_path):
 
 
 def test_custom_css_route_404_when_not_configured():
-    app = create_app(Hub(), overlay_dir="web/overlay", config=AppConfig())
+    app = create_app(Hub(), overlay_dir=resolve_overlay_dir(), config=AppConfig())
 
     with TestClient(app) as client:
         response = client.get("/custom.css")
@@ -377,3 +377,58 @@ def test_custom_css_route_404_when_not_configured():
 def test_overlay_config_font_weight_out_of_range_raises():
     with pytest.raises(ValidationError):
         OverlayConfig(font_weight=1000)
+
+
+# ---------------------------------------------------------------------------
+# Gap #2 — create_app() _UNSET branch and overlay_dir=None branch
+# ---------------------------------------------------------------------------
+
+
+def test_create_app_default_overlay_dir_mounts_overlay_and_serves_html(monkeypatch, tmp_path):
+    """create_app() with no overlay_dir arg resolves from the package and mounts the
+    static overlay; GET /overlay.html must return 200 with the real overlay content.
+
+    This exercises the _UNSET sentinel branch: overlay_dir is omitted so
+    create_app() calls resolve_overlay_dir() internally.
+
+    Crucially, the process is chdir'd into a TEMP dir that has NO web/ subdir.
+    A 200 here proves the resolution is __file__-based, NOT cwd-based.
+    """
+    # Change cwd to a temp dir with no web/ dir — cwd-relative resolution would fail.
+    assert not (tmp_path / "web").exists(), "tmp_path must have no web/ dir"
+    monkeypatch.chdir(tmp_path)
+
+    app = create_app(Hub())  # overlay_dir omitted → _UNSET → resolved from package
+
+    with TestClient(app) as client:
+        response = client.get("/overlay.html")
+
+    assert response.status_code == 200, (
+        f"Expected 200 from /overlay.html when overlay_dir is auto-resolved from a "
+        f"cwd with no web/ dir; got {response.status_code}. "
+        "Resolution must be __file__-based (packaging.resolve_overlay_dir), not cwd-based."
+    )
+    # Confirm it's the real overlay HTML (not an empty stub).
+    assert '<div class="caption-box">' in response.text
+
+
+def test_create_app_overlay_dir_none_skips_mount_but_ws_works():
+    """create_app(overlay_dir=None) must skip the static mount entirely.
+
+    The WebSocket endpoint must still be wired; /overlay.html must return 404
+    (no static files mounted), not crash.
+    """
+    hub = Hub()
+    app = create_app(hub, overlay_dir=None)
+
+    with TestClient(app) as client:
+        # Static overlay is NOT mounted — no 200 for overlay.html.
+        response = client.get("/overlay.html")
+        assert response.status_code == 404, (
+            f"Expected 404 for /overlay.html when overlay_dir=None; got {response.status_code}"
+        )
+
+        # WebSocket endpoint is still present and functional.
+        with client.websocket_connect("/ws") as ws:
+            initial = ws.receive_json()
+    assert initial == {"type": "caption", "partial": "", "committed": []}

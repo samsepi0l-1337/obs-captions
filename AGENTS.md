@@ -24,6 +24,7 @@
 - 오버레이: 정적 HTML/CSS/JS. 투명 배경, committed/partial 2-tier, diff push.
 - OBS 플러그인: C++ + obs-plugintemplate + **Qt6 QWebSocket**. 내장 `text_ft2_source`(.version=2) 소유·갱신(approach b, 직접 래스터화 금지).
 - 테스트: **pytest**. 린트/포맷: **ruff**. (이 프로젝트엔 TS/JS/pnpm/vitest/playwright/bun 없음.)
+- 배포(Windows): **PyInstaller onedir** 번들 → `dist/obs-captions/obs-captions.exe`. 빌드는 Windows에서 `scripts/build_windows.{ps1,py}` → `pyinstaller obs_captions.spec`. CPU 기본·GPU 옵트인(`--extra gpu` + `.spec` GPU 블록 주석 해제). 정적 에셋 경로는 `packaging.resolve_web_dir()`(3-mode)로만 해석. 모델은 첫 실행 HuggingFace 다운로드(또는 오프라인 사전 번들). 상세는 README "Windows 배포 (PyInstaller)".
 
 ## Hard Constraints (어기면 빌드/런타임 깨짐)
 
@@ -35,10 +36,11 @@
 
 ## Project Structure (목표)
 
-- `src/obs_captions/`: `cli.py`, `config.py`, `audio/{capture,devices,loopback}.py`, `vad.py`, `stt/{base,local_whisper,openai_realtime,elevenlabs_realtime}.py`, `pipeline.py`, `server/{app,hub}.py`
-- `web/overlay/`: `overlay.{html,css,js}`
+- `src/obs_captions/`: `cli.py`, `config.py`, `packaging.py`, `audio/{capture,devices,loopback}.py`, `vad.py`, `stt/{base,local_whisper,openai_realtime,elevenlabs_realtime}.py`, `pipeline.py`, `server/{app,hub}.py`
+- `src/obs_captions/web/overlay/`: `overlay.{html,css,js}` (패키지 내부 — pip 휠·PyInstaller 번들에 함께 실림. 경로는 `packaging.resolve_web_dir()`가 해석: dev/installed=`__file__` 기준, frozen=`sys._MEIPASS/obs_captions/web`. **CWD 상대경로 금지**).
+- `obs_captions.spec` / `scripts/build_windows.{ps1,py}`: PyInstaller onedir 빌드(Windows). `.spec` `datas`의 `obs_captions/web` 목적지는 `resolve_web_dir()` frozen 경로와 **반드시 일치**.
 - `obs-plugin/`: `buildspec.json`, `CMakeLists.txt`, `CMakePresets.json`, `src/{plugin-main,caption-source,caption-ws-client}.cpp`
-- `tests/`: `test_{pipeline,stt_base,config,server}.py`
+- `tests/`: `test_{pipeline,stt_base,config,server,packaging}.py`
 - `scripts/audio_check.py`
 
 ## Key Interfaces (계약)
