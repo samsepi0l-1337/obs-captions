@@ -57,6 +57,11 @@ class DeepgramBackend(StreamingBackend):
         # Raw binary frame — no base64, no JSON wrapper.
         return pcm16
 
+    async def stop_stream(self) -> None:
+        """Send CloseStream frame before closing so the server flushes in-flight audio."""
+        await self._send(json.dumps({"type": "CloseStream"}))
+        await super().stop_stream()
+
     def parse_event(self, message: str | bytes) -> ParsedEvent:
         try:
             data = json.loads(message)

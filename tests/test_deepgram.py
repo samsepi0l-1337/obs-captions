@@ -213,3 +213,100 @@ def test_missing_key_raises():
     finally:
         if old is not None:
             os.environ["DEEPGRAM_API_KEY"] = old
+
+
+def test_parse_event_invalid_json_returns_none_kind():
+    """parse_event must return ParsedEvent(kind=None) for non-JSON input."""
+    from tests._fake_ws import FakeWS
+
+    ws = FakeWS()
+    connect_fn, _ = fake_connect(ws)
+    backend = DeepgramBackend(
+        api_key=_FAKE_KEY,
+        connect_fn=connect_fn,
+        language="ko",
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    result = backend.parse_event(b"\xff\x00 not json at all")
+    assert result.kind is None
+
+
+def test_parse_event_missing_alternatives_key_returns_none_kind():
+    """parse_event must return ParsedEvent(kind=None) when 'alternatives' key is absent."""
+    from tests._fake_ws import FakeWS
+
+    ws = FakeWS()
+    connect_fn, _ = fake_connect(ws)
+    backend = DeepgramBackend(
+        api_key=_FAKE_KEY,
+        connect_fn=connect_fn,
+        language="ko",
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    # 'channel' dict has no 'alternatives' key → KeyError
+    result = backend.parse_event(
+        json.dumps({"type": "Results", "channel": {}, "is_final": True})
+    )
+    assert result.kind is None
+
+
+def test_build_connect_no_language_param_when_language_empty():
+    """build_connect() must NOT add 'language' to the URL when language is empty (branch 50->52)."""
+    connect_fn, captured = fake_connect(FakeWS())
+    backend = DeepgramBackend(
+        api_key=_FAKE_KEY,
+        connect_fn=connect_fn,
+        language="",   # falsy → if self.language: branch is skipped
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    info = backend.build_connect()
+    assert "language" not in info.url
+
+
+def test_parse_event_empty_alternatives_list_returns_none_kind():
+    """parse_event must return ParsedEvent(kind=None) when alternatives list is empty."""
+    from tests._fake_ws import FakeWS
+
+    ws = FakeWS()
+    connect_fn, _ = fake_connect(ws)
+    backend = DeepgramBackend(
+        api_key=_FAKE_KEY,
+        connect_fn=connect_fn,
+        language="ko",
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    # alternatives list is empty → IndexError
+    result = backend.parse_event(
+        json.dumps({"type": "Results", "channel": {"alternatives": []}, "is_final": True})
+    )
+    assert result.kind is None
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_sends_close_stream_frame():
+    """stop_stream() must send {"type":"CloseStream"} before closing the socket.
+
+    Per Deepgram docs, omitting CloseStream causes the server to discard
+    audio that has not yet been transcribed.  The frame must be the last
+    outbound message before ws.close() is called.
+    """
+    ws = FakeWS()
+    backend, _ = _make(ws, [], [])
+    await backend.start_stream()
+    pcm = b"\x00\x01" * 160
+    await backend.feed_audio(pcm)
+    await backend.stop_stream()
+
+    # The CloseStream JSON frame must appear after the audio frame.
+    close_frames = [
+        msg for msg in ws.sent if isinstance(msg, str) and json.loads(msg).get("type") == "CloseStream"
+    ]
+    assert len(close_frames) == 1, f"Expected exactly 1 CloseStream frame, got {ws.sent}"
+    # CloseStream must come after the audio payload (raw bytes).
+    audio_idx = next(i for i, m in enumerate(ws.sent) if isinstance(m, bytes))
+    close_idx = next(i for i, m in enumerate(ws.sent) if isinstance(m, str) and json.loads(m).get("type") == "CloseStream")
+    assert close_idx > audio_idx, "CloseStream frame must follow the audio frame"

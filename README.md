@@ -237,6 +237,37 @@ OBS_WS_PASSWORD=your_obs_websocket_password
 | `config` | 현재 설정 출력(API 키 마스킹) |
 | `serve [--demo]` | 오버레이 서버만 실행(`--demo`는 가짜 자막) |
 | `run [--sink browser\|obs\|both]` | 마이크 → STT → 자막 전체 파이프라인 실행 |
+| `check-engine ENGINE [--wav PATH] [--seconds N] [--language CODE]` | 엔진 연결·API 키 검증 + 선택적 WAV 스트리밍 스모크 테스트 |
+
+## 스모크 테스트 (check-engine)
+
+API 키를 설정한 뒤 `check-engine` 명령으로 각 provider가 정상 작동하는지 빠르게 확인합니다.
+
+```bash
+# .env에 키 입력
+cp .env.example .env
+# DEEPGRAM_API_KEY=dg_xxxx 등 입력
+
+# 연결만 확인 (WAV 없음 — 키/region 검증 + start/stop)
+uv run obs-captions check-engine deepgram
+
+# WAV 파일을 스트리밍해 실제 전사 결과 확인
+uv run obs-captions check-engine deepgram --wav sample.wav
+
+# AssemblyAI
+uv run obs-captions check-engine assemblyai --wav sample.wav
+
+# Groq
+uv run obs-captions check-engine groq --wav sample.wav
+
+# Azure (AZURE_SPEECH_KEY + AZURE_SPEECH_REGION 필요)
+uv run obs-captions check-engine azure --wav sample.wav
+
+# 언어·대기시간 조정
+uv run obs-captions check-engine deepgram --wav sample.wav --language en --seconds 15
+```
+
+`[partial]` / `[final]` 줄이 출력되면 정상. 키 미설정 시 명확한 오류 메시지와 함께 비정상 종료합니다.
 
 ## 개발 / 테스트
 

@@ -133,3 +133,61 @@ async def test_missing_api_key_raises():
     finally:
         if old is not None:
             os.environ["GROQ_API_KEY"] = old
+
+
+async def test_lazy_client_creation_when_no_http_client_injected():
+    """_client() must create a new httpx.AsyncClient when none was injected (lazy init path)."""
+    # Do not inject http_client — backend owns it and creates lazily.
+    backend = GroqBackend(
+        api_key=_FAKE_KEY,
+        language="ko",
+        on_partial=_noop,
+        on_final=_noop,
+        # http_client intentionally omitted → _owns_client=True, _http_client=None
+    )
+    assert backend._http_client is None
+    client = await backend._client()
+    assert client is not None
+    # Calling again must return the same instance (no double-create).
+    client2 = await backend._client()
+    assert client2 is client
+    # Clean up the owned client.
+    await backend.stop_stream()
+    assert backend._http_client is None
+
+
+async def test_stop_stream_closes_and_nils_owned_client():
+    """stop_stream() must aclose() the owned httpx.AsyncClient and set it to None."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_client = MagicMock()
+    mock_client.aclose = AsyncMock()
+
+    backend = GroqBackend(
+        api_key=_FAKE_KEY,
+        language="ko",
+        on_partial=_noop,
+        on_final=_noop,
+        # Inject a client so _owns_client=False by default; we'll flip ownership manually.
+        http_client=mock_client,
+    )
+    # Force _owns_client=True to exercise the aclose() branch.
+    backend._owns_client = True
+
+    await backend.stop_stream()
+
+    mock_client.aclose.assert_awaited_once()
+    assert backend._http_client is None
+
+
+async def test_stop_stream_does_not_close_external_client():
+    """stop_stream() must NOT close a client that was externally injected (_owns_client=False)."""
+    mock_client = _make_mock_client({"text": ""})
+    backend = _make_backend(mock_client)
+    # _owns_client is False because we injected http_client.
+    assert backend._owns_client is False
+
+    await backend.stop_stream()
+
+    # aclose should not have been called on the external client.
+    assert not hasattr(mock_client, "aclose") or not mock_client.aclose.called

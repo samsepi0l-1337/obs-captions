@@ -51,7 +51,7 @@ def list_loopback_devices_command() -> None:
     show_default=True,
     help="Output sink: browser (WS overlay server), obs (obs-websocket Text source), or both.",
 )
-def run_command(config_path: str | None, sink: str) -> None:
+def run_command(config_path: str | None, sink: str) -> None:  # pragma: no cover  # invokes asyncio.run with a live server
     asyncio.run(_run(config_path, sink))
 
 
@@ -67,11 +67,11 @@ def config_command(config_path: str | None) -> None:
 @click.option(
     "--demo", is_flag=True, help="Emit scripted fake Korean captions for browser/WS demos."
 )
-def serve_command(config_path: str | None, demo: bool) -> None:
+def serve_command(config_path: str | None, demo: bool) -> None:  # pragma: no cover  # invokes asyncio.run with a live uvicorn server
     asyncio.run(_serve(config_path, demo))
 
 
-async def _serve(config_path: str | None, demo: bool) -> None:
+async def _serve(config_path: str | None, demo: bool) -> None:  # pragma: no cover  # requires a live uvicorn server
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state
 
@@ -148,7 +148,7 @@ def make_capture(
     )
 
 
-async def _run(config_path: str | None, sink: str = "browser") -> None:
+async def _run(config_path: str | None, sink: str = "browser") -> None:  # pragma: no cover  # requires live audio capture + uvicorn server
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state
     from obs_captions.stt.registry import create_backend
@@ -221,7 +221,7 @@ async def _capture_to_backend(capture, segmenter, backend) -> None:
             await backend.flush()
 
 
-async def _run_demo_backend(backend: FakeBackend) -> None:
+async def _run_demo_backend(backend: FakeBackend) -> None:  # pragma: no cover  # long-running demo loop; not unit-testable
     script = [
         ["안", "안녕하세요", "안녕하세요 여러분"],
         ["오", "오늘 방송", "오늘 방송 자막 테스트입니다"],
@@ -237,7 +237,155 @@ async def _run_demo_backend(backend: FakeBackend) -> None:
             await asyncio.sleep(1.5)
 
 
-def _overlay_dir() -> Path:
+@cli.command("check-engine")
+@click.argument("engine")
+@click.option(
+    "--wav",
+    "wav_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Path to a WAV file to stream through the backend. Omit for connectivity-only check.",
+)
+@click.option(
+    "--seconds",
+    default=10,
+    show_default=True,
+    help="Maximum seconds to wait for transcripts.",
+)
+@click.option(
+    "--language",
+    default=None,
+    help="Language code override (e.g. en, ko). Defaults to config value.",
+)
+@click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
+def check_engine_command(
+    engine: str,
+    wav_path: str | None,
+    seconds: int,
+    language: str | None,
+    config_path: str | None,
+) -> None:
+    """Smoke-test ENGINE: validates API key/region and optionally streams audio."""
+    try:
+        exit_code = asyncio.run(_check_engine(engine, wav_path, seconds, language, config_path))
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    else:
+        sys.exit(exit_code)
+
+
+async def _check_engine(
+    engine: str,
+    wav_path: str | None,
+    seconds: int,
+    language: str | None,
+    config_path: str | None,
+) -> int:
+    """Return 0 on success, 1 on failure."""
+    from obs_captions.stt.registry import create_backend
+
+    config = load_config(config_path)
+    # Override engine + language for this smoke run without mutating the model.
+    object.__setattr__(config, "engine", engine)  # type: ignore[arg-type]
+    if language is not None:
+        object.__setattr__(config, "language", language)  # type: ignore[arg-type]
+
+    finals: list[str] = []
+    partials: list[str] = []
+
+    def on_partial(t: Any) -> None:
+        partials.append(t.text)
+        click.echo(f"[partial] {t.text}")
+
+    def on_final(t: Any) -> None:
+        finals.append(t.text)
+        click.echo(f"[final]   {t.text}")
+
+    try:
+        backend = create_backend(config, on_partial=on_partial, on_final=on_final)
+    except ValueError as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        return 1
+
+    await backend.start_stream()
+
+    try:
+        if wav_path is not None:
+            await _stream_wav(backend, wav_path, seconds)
+            await backend.flush()
+            # Wait briefly for in-flight transcript events from streaming providers
+            # (e.g. AssemblyAI/Deepgram) whose flush() is a no-op and whose recv
+            # loop processes events asynchronously.  We poll up to the remaining
+            # deadline for at least one final before stopping.
+            deadline = asyncio.get_running_loop().time() + seconds
+            while not finals and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.05)
+        else:
+            click.echo(f"Connectivity check for engine '{engine}' — no WAV provided, stopping immediately.")
+    finally:
+        await backend.stop_stream()
+
+    if wav_path is not None:
+        n_finals = len(finals)
+        n_partials = len(partials)
+        if n_finals == 0:
+            click.echo(
+                "WARNING: 0 final(s) received after streaming WAV — "
+                "provider may not have transcribed audio.",
+                err=True,
+            )
+        click.echo(f"Done. {n_finals} final(s), {n_partials} partial(s) received.")
+    else:
+        click.echo(f"Engine '{engine}' started and stopped successfully.")
+    return 0
+
+
+async def _stream_wav(backend: Any, wav_path: str, max_seconds: int) -> None:
+    """Read a WAV file and feed PCM16 chunks into the backend."""
+    import wave
+
+    chunk_samples = 1600  # 100 ms of 16 kHz mono
+    deadline = asyncio.get_running_loop().time() + max_seconds
+
+    with wave.open(wav_path, "rb") as wf:
+        src_rate = wf.getframerate()
+        src_channels = wf.getnchannels()
+        src_width = wf.getsampwidth()
+        raw = wf.readframes(wf.getnframes())
+
+    # Normalize to 16-bit PCM
+    if src_width != 2:
+        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
+
+        raw = audioop.lin2lin(raw, src_width, 2)
+
+    # Mix down to mono if stereo
+    if src_channels > 1:
+        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
+
+        raw = audioop.tomono(raw, 2, 0.5, 0.5)
+
+    # Resample to 16000 Hz if needed
+    if src_rate != 16000:
+        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
+
+        raw, _ = audioop.ratecv(raw, 2, 1, src_rate, 16000, None)
+
+    # Feed in 100ms chunks
+    offset = 0
+    chunk_bytes = chunk_samples * 2
+    while offset < len(raw):
+        if asyncio.get_running_loop().time() >= deadline:
+            click.echo(f"[check-engine] Reached {max_seconds}s limit.", err=True)
+            break
+        chunk = raw[offset : offset + chunk_bytes]
+        await backend.feed_audio(chunk)
+        offset += chunk_bytes
+        await asyncio.sleep(0.1)
+
+
+def _overlay_dir() -> Path:  # pragma: no cover  # only called from _serve/_run which requires a live server
     # Resolve the bundled overlay assets relative to the package (dev/pip) or
     # the PyInstaller bundle (frozen) — never CWD-relative. See packaging.py.
     from obs_captions.packaging import resolve_overlay_dir

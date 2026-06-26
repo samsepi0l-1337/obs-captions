@@ -181,3 +181,30 @@ def test_missing_key_raises():
     finally:
         if old is not None:
             os.environ["ASSEMBLYAI_API_KEY"] = old
+
+
+@pytest.mark.asyncio
+async def test_parse_event_invalid_json_returns_none_kind():
+    """parse_event must return ParsedEvent(kind=None) for non-JSON input (e.g. binary frame)."""
+    ws = FakeWS()
+    backend, _ = _make(ws, [], [])
+    # Call parse_event directly — no need to start the stream for a pure unit test.
+    result = backend.parse_event(b"\xff\xfe not valid json")
+    assert result.kind is None
+
+
+@pytest.mark.asyncio
+async def test_parse_event_empty_transcript_partial_turn_emits_partial_with_empty_text():
+    """Turn with end_of_turn=False and empty transcript still fires on_partial (streaming gap)."""
+    partials: list[Transcript] = []
+    ws = FakeWS()
+    backend, _ = _make(ws, partials, [])
+    await backend.start_stream()
+    try:
+        # empty-transcript partial Turn — the transcript key is present but empty
+        ws.push(json.dumps({"type": "Turn", "transcript": "", "end_of_turn": False}))
+        await wait_for(lambda: len(partials) >= 1)
+        assert partials[-1].text == ""
+        assert partials[-1].is_final is False
+    finally:
+        await backend.stop_stream()

@@ -407,3 +407,91 @@ async def test_azure_model_kwarg_never_forwarded(monkeypatch):
     # Must not raise TypeError (which would happen if model= were forwarded to AzureBackend)
     backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
     assert isinstance(backend, AzureBackend)
+
+
+# ---------------------------------------------------------------------------
+# Provider model override branches (openai / elevenlabs / xai)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_openai_engine_uses_provider_model(monkeypatch):
+    """Registry must forward providers.openai.model to OpenAIRealtimeBackend."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.openai_realtime import OpenAIRealtimeBackend
+
+    cfg = AppConfig(
+        engine="openai",
+        providers={"openai": ProviderConfig(model="gpt-4o-transcribe")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, OpenAIRealtimeBackend)
+    assert backend.model == "gpt-4o-transcribe"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_elevenlabs_engine_uses_provider_model(monkeypatch):
+    """Registry must forward providers.elevenlabs.model to ElevenLabsRealtimeBackend."""
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "xi-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.elevenlabs_realtime import ElevenLabsRealtimeBackend
+
+    cfg = AppConfig(
+        engine="elevenlabs",
+        providers={"elevenlabs": ProviderConfig(model="scribe_v1_experimental")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, ElevenLabsRealtimeBackend)
+    assert backend.model == "scribe_v1_experimental"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_xai_engine_uses_provider_model(monkeypatch):
+    """Registry must forward providers.xai.model to XaiBackend."""
+    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.xai import XaiBackend
+
+    cfg = AppConfig(
+        engine="xai",
+        providers={"xai": ProviderConfig(model="grok-2-latest")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, XaiBackend)
+    assert backend.model == "grok-2-latest"  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Google speech_v2 missing project_id raise (registry.py line 118)
+# ---------------------------------------------------------------------------
+
+
+def test_google_speech_v2_missing_project_id_raises(monkeypatch):
+    """google engine in speech_v2 mode must raise ValueError when project_id is absent."""
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    from obs_captions.config import AppConfig, ProviderConfig
+
+    cfg = AppConfig(
+        engine="google",
+        providers={"google": ProviderConfig(mode="speech_v2")},
+    )
+    with pytest.raises(ValueError, match="GOOGLE_CLOUD_PROJECT"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+# ---------------------------------------------------------------------------
+# Unknown engine raise (registry.py line 193)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_engine_raises_value_error():
+    """create_backend must raise ValueError for an unrecognised engine name."""
+    from unittest.mock import MagicMock
+
+    # AppConfig uses a Literal type that rejects unknown values at construction.
+    # Bypass Pydantic validation with a mock so we can reach the registry's final raise.
+    cfg = MagicMock()
+    cfg.engine = "does-not-exist"
+    with pytest.raises(ValueError, match="Unknown engine"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)

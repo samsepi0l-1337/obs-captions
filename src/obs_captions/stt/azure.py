@@ -168,6 +168,6 @@ class AzureBackend(STTBackend):
     def _load_sdk(self) -> Any:
         try:
             import azure.cognitiveservices.speech as speechsdk  # noqa: PLC0415
-        except ImportError as exc:  # pragma: no cover - exercised via fake injection
+        except ImportError as exc:  # pragma: no cover - requires azure-cognitiveservices-speech absent at runtime; tests inject fake SDK to bypass this import
             raise ImportError(_IMPORT_HINT) from exc
         return speechsdk

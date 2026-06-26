@@ -340,3 +340,77 @@ def test_missing_region_raises() -> None:
     finally:
         if old is not None:
             os.environ["AZURE_SPEECH_REGION"] = old
+
+
+@pytest.mark.asyncio
+async def test_flush_is_noop_and_returns_none() -> None:
+    """flush() must be a no-op that returns None (Azure finalizes server-side)."""
+    sdk = FakeSpeechSdk()
+    backend = _make(sdk, [], [])
+    await backend.start_stream()
+    try:
+        result = await backend.flush()
+        assert result is None
+    finally:
+        await backend.stop_stream()
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_with_null_recognizer_skips_recognizer_stop() -> None:
+    """stop_stream() when _recognizer is None skips the recognizer block (branch 157->162)."""
+    sdk = FakeSpeechSdk()
+    backend = _make(sdk, [], [])
+    await backend.start_stream()
+    # Null out recognizer while keeping _running=True so stop_stream proceeds
+    # past the early-return guard and hits the `if recognizer is not None` check
+    # with recognizer=None, jumping directly to the push_stream check (157->162).
+    backend._recognizer = None
+    await backend.stop_stream()  # must not raise
+    # push_stream was still set so it should have been closed
+    assert sdk.audio.last_push_stream is not None
+    assert sdk.audio.last_push_stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_with_null_recognizer_and_null_push_stream_is_noop() -> None:
+    """stop_stream() when both _recognizer and _push_stream are None is a no-op (branch 162->exit)."""
+    sdk = FakeSpeechSdk()
+    backend = _make(sdk, [], [])
+    await backend.start_stream()
+    # Null out both so both `if ... is not None` guards are False (162->exit path).
+    backend._recognizer = None
+    backend._push_stream = None
+    await backend.stop_stream()  # must not raise
+    assert backend._running is False
+
+
+@pytest.mark.asyncio
+async def test_load_sdk_returns_injected_module_via_sys_modules(monkeypatch) -> None:
+    """_load_sdk() must import and return the speechsdk module when the real package is present."""
+    import sys
+    import types
+
+    from obs_captions.stt.azure import AzureBackend
+
+    # Build a minimal fake module that satisfies the import path.
+    fake_module = types.ModuleType("azure.cognitiveservices.speech")
+    # The import machinery needs the parent packages too; use monkeypatch so
+    # sys.modules is automatically restored after the test (prevents order-fragile
+    # pollution if a real azure SDK is ever added to the environment).
+    azure_mod = sys.modules.get("azure") or types.ModuleType("azure")
+    cogn_mod = sys.modules.get("azure.cognitiveservices") or types.ModuleType("azure.cognitiveservices")
+    setattr(azure_mod, "cognitiveservices", cogn_mod)
+    setattr(cogn_mod, "speech", fake_module)
+    monkeypatch.setitem(sys.modules, "azure", azure_mod)
+    monkeypatch.setitem(sys.modules, "azure.cognitiveservices", cogn_mod)
+    monkeypatch.setitem(sys.modules, "azure.cognitiveservices.speech", fake_module)
+
+    backend = AzureBackend(
+        api_key="k",
+        region="eastus",
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+        speechsdk=None,  # force lazy load path
+    )
+    result = backend._load_sdk()
+    assert result is fake_module
