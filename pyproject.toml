@@ -31,6 +31,9 @@ elevenlabs = ["elevenlabs"]
 google = ["google-cloud-speech"]
 obs = ["simpleobsws>=1.2.0"]
 bench = ["psutil>=5.9"]
+# Windows desktop/system-audio (WASAPI) loopback capture (config audio.source="loopback").
+# PyAudioWPatch ships Windows-only wheels; the marker keeps macOS/Linux `uv sync` clean.
+loopback = ["pyaudiowpatch; platform_system == 'Windows'"]
 
 [project.scripts]
 obs-captions = "obs_captions.cli:cli"

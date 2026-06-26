@@ -25,6 +25,9 @@ class ProviderConfig(BaseModel):
 class AudioConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # "mic": sounddevice input (default, all platforms).
+    # "loopback": WASAPI desktop/system-audio capture (Windows only; --extra loopback).
+    source: Literal["mic", "loopback"] = "mic"
     device: str | None = None
     samplerate: int = 16000
     channels: int = 1

@@ -27,6 +27,31 @@ def list_input_devices(
     return devices
 
 
+def list_loopback_devices(
+    *,
+    query_loopback: Callable[[], Sequence[dict[str, Any]]] | None = None,
+) -> list[InputDevice]:
+    """List WASAPI loopback (system-audio) devices on Windows.
+
+    Injectable like :func:`list_input_devices`; the default seam lazy-imports
+    ``loopback.query_loopback_devices`` so importing this module never pulls in
+    ``pyaudiowpatch`` (Windows-only).
+    """
+    query = query_loopback or _pyaudiowpatch_query_loopback
+    devices: list[InputDevice] = []
+    for info in query():
+        channels = int(info.get("maxInputChannels", 0))
+        if channels > 0:
+            devices.append(
+                InputDevice(
+                    index=int(info.get("index", 0)),
+                    name=str(info.get("name", "")),
+                    channels=channels,
+                )
+            )
+    return devices
+
+
 def resolve_device(
     spec: str | int | None,
     *,
@@ -59,3 +84,9 @@ def _sounddevice_query_devices() -> Sequence[dict[str, Any]]:
     import sounddevice as sd
 
     return sd.query_devices()
+
+
+def _pyaudiowpatch_query_loopback() -> Sequence[dict[str, Any]]:
+    from obs_captions.audio.loopback import query_loopback_devices
+
+    return query_loopback_devices()

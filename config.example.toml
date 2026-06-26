@@ -2,8 +2,12 @@ engine = "local"          # local | openrouter | replicate | openai | elevenlabs
 language = "ko"
 
 [audio]
-device = ""
-samplerate = 16000
+source = "mic"            # mic | loopback. loopback = Windows 데스크톱/시스템 사운드(WASAPI)
+                          # 캡처 → 게임·미디어 소리도 자막. Windows 전용(`uv sync --extra loopback`),
+                          # macOS/Linux는 가상 루프백 장치 필요(범위 외) → mic 사용.
+device = ""              # 빈값=기본 장치. loopback은 빈값=기본 루프백 장치
+                          # (이름/인덱스는 `list-loopback-devices`로 확인)
+samplerate = 16000        # loopback은 장치 네이티브 레이트(예: 48k stereo)로 캡처 후 16k mono로 리샘플
 channels = 1
 
 [server]

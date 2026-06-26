@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
 import click
 import uvicorn
@@ -28,6 +30,15 @@ def list_devices() -> None:
     from obs_captions.audio.devices import list_input_devices
 
     for device in list_input_devices():
+        click.echo(f"{device.index}\t{device.name}\t{device.channels}")
+
+
+@cli.command("list-loopback-devices")
+def list_loopback_devices_command() -> None:
+    """List WASAPI loopback (system-audio) devices for `[audio] source = "loopback"` (Windows)."""
+    from obs_captions.audio.devices import list_loopback_devices
+
+    for device in list_loopback_devices():
         click.echo(f"{device.index}\t{device.name}\t{device.channels}")
 
 
@@ -89,8 +100,55 @@ async def _serve(config_path: str | None, demo: bool) -> None:
                 await demo_task
 
 
-async def _run(config_path: str | None, sink: str = "browser") -> None:
+def make_capture(
+    config: Any,
+    *,
+    platform: str | None = None,
+    pyaudio_module: Any | None = None,
+) -> Any:
+    """Build the audio capture for ``config.audio.source`` ("mic" or "loopback").
+
+    For ``source="loopback"`` (Windows only) the loopback device + its native
+    sample rate are resolved and passed to MicCapture so the existing resample
+    (native 48k stereo -> 16k mono) handles the conversion. ``platform`` and
+    ``pyaudio_module`` are injectable for testing without Windows hardware.
+    """
     from obs_captions.audio import MicCapture, resolve_device
+
+    if config.audio.source == "loopback":
+        current = platform if platform is not None else sys.platform
+        if current != "win32":
+            raise RuntimeError(
+                "audio.source='loopback' captures Windows system audio (WASAPI) and is "
+                "only supported on Windows. macOS/Linux need a virtual loopback device "
+                "(out of scope); use source='mic' on this platform."
+            )
+        from obs_captions.audio.loopback import (
+            make_loopback_stream_factory,
+            resolve_loopback_device,
+        )
+
+        device = resolve_loopback_device(config.audio.device, pyaudio_module=pyaudio_module)
+        factory = make_loopback_stream_factory(
+            device_channels=device.channels, pyaudio_module=pyaudio_module
+        )
+        return MicCapture(
+            device=device.index,
+            samplerate=device.samplerate,
+            channels=1,
+            blocksize=max(1, device.samplerate // 10),
+            stream_factory=factory,
+        )
+
+    return MicCapture(
+        device=resolve_device(config.audio.device),
+        samplerate=config.audio.samplerate,
+        channels=config.audio.channels,
+        blocksize=max(1, config.audio.samplerate // 10),
+    )
+
+
+async def _run(config_path: str | None, sink: str = "browser") -> None:
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state
     from obs_captions.stt.registry import create_backend
@@ -120,12 +178,7 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
         await obs_sink.start()
 
     backend = create_backend(config, on_partial=state.on_partial, on_final=state.on_final)
-    capture = MicCapture(
-        device=resolve_device(config.audio.device),
-        samplerate=config.audio.samplerate,
-        channels=config.audio.channels,
-        blocksize=max(1, config.audio.samplerate // 10),
-    )
+    capture = make_capture(config)
     is_local = config.engine == "local"
     vad_threshold = config.local.vad_threshold if is_local else 0.5
     min_silence_ms = config.local.min_silence_ms if is_local else 500

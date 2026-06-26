@@ -16,7 +16,7 @@
 
 - 런타임: Python 3.12 (uv 핀, `.venv`). **Py3.14 금지** — PyAudio·webrtcvad 휠 없음, CTranslate2 macOS 버그(#2063).
 - 의존성: **uv** + `pyproject.toml`.
-- 오디오: **sounddevice** (PyAudio 금지). 16kHz mono float32 콜백.
+- 오디오: **sounddevice** (PyAudio 금지). 16kHz mono float32 콜백. 단, **선택적 Windows 시스템 사운드 캡처**(`[audio] source="loopback"`)만 예외 — `pyaudiowpatch`(PyAudio 포크, `--extra loopback`)를 `audio/loopback.py` 어댑터 1곳에서 sounddevice 스타일 콜백/포맷(paFloat32→`callback(indata,...)`)으로 감싸고, MicCapture 콜백/포맷 파이프라인은 불변(네이티브 48k stereo→16k mono 다운믹스·리샘플 재사용).
 - VAD: **Silero VAD (ONNX 경로)** (webrtcvad 금지).
 - 플랫폼: **Windows 10/11**(NVIDIA CUDA 로컬 STT 가속, 1급) + **macOS Apple Silicon**(CPU) 공동 1급, Linux 동작.
 - STT(pluggable): `local` faster-whisper — `[local].device`(auto|cpu|cuda)·`compute_type`로 제어. Windows/Linux는 **CUDA**(auto→탐지/float16, 미탐지 시 CPU 폴백), macOS는 CPU int8. `device` 분기는 순수 함수 `stt/device.py:resolve_device`(CUDA 미탐지=빈 set→CPU) / `openai` Realtime(`gpt-realtime-whisper`) / `elevenlabs` Scribe v2 Realtime / `google` mode `gemini`(Gemini Live, API 키) 또는 `speech_v2`(Speech-to-Text v2 `chirp_2` gRPC 스트리밍, 서비스계정·`--extra google`, asyncio.Queue 브리지·270s 선제 재시작·client 주입). 내부 정규화 16kHz PCM16(OpenAI 어댑터만 24kHz 업샘플).
@@ -27,7 +27,7 @@
 
 ## Hard Constraints (어기면 빌드/런타임 깨짐)
 
-- sounddevice 사용·PyAudio 금지. Silero VAD 사용·webrtcvad 금지.
+- sounddevice 사용·PyAudio 금지(마이크 경로). 예외: `source="loopback"`(Windows 전용)만 PyAudioWPatch를 `audio/loopback.py` 어댑터로 캡슐화(비Windows는 lazy-import라 미설치여도 패키지 import 정상). Silero VAD 사용·webrtcvad 금지.
 - faster-whisper: macOS는 CPU 전용, Windows/Linux NVIDIA는 CUDA(`device="auto"/"cuda"`). GPU 런타임은 `--extra gpu`(`nvidia-cublas-cu12`/`nvidia-cudnn-cu12`, macOS는 env marker로 제외). Windows DLL 경로는 `platform_dll.add_cuda_dll_directories`가 CLI 진입 시 등록(비Windows no-op). `cpu_threads`(intra)는 CPU 경로에서 유지.
 - 오버레이는 `http://localhost` URL로 서빙(**file:// 금지** — CORS/getUserMedia 문제).
 - 플러그인: `obs_source_update`를 소켓 스레드에서 직접 호출 금지 → `video_tick`(graphics thread) dirty-flag 또는 `obs_queue_task(OBS_TASK_GRAPHICS)`.
@@ -35,7 +35,7 @@
 
 ## Project Structure (목표)
 
-- `src/obs_captions/`: `cli.py`, `config.py`, `audio/{capture,devices}.py`, `vad.py`, `stt/{base,local_whisper,openai_realtime,elevenlabs_realtime}.py`, `pipeline.py`, `server/{app,hub}.py`
+- `src/obs_captions/`: `cli.py`, `config.py`, `audio/{capture,devices,loopback}.py`, `vad.py`, `stt/{base,local_whisper,openai_realtime,elevenlabs_realtime}.py`, `pipeline.py`, `server/{app,hub}.py`
 - `web/overlay/`: `overlay.{html,css,js}`
 - `obs-plugin/`: `buildspec.json`, `CMakeLists.txt`, `CMakePresets.json`, `src/{plugin-main,caption-source,caption-ws-client}.cpp`
 - `tests/`: `test_{pipeline,stt_base,config,server}.py`

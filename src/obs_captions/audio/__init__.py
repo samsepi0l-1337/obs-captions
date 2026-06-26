@@ -4,13 +4,19 @@ from obs_captions.audio.capture import (
     pcm16_to_float32,
     resample_linear,
 )
-from obs_captions.audio.devices import InputDevice, list_input_devices, resolve_device
+from obs_captions.audio.devices import (
+    InputDevice,
+    list_input_devices,
+    list_loopback_devices,
+    resolve_device,
+)
 
 __all__ = [
     "InputDevice",
     "MicCapture",
     "float32_to_pcm16",
     "list_input_devices",
+    "list_loopback_devices",
     "pcm16_to_float32",
     "resample_linear",
     "resolve_device",
