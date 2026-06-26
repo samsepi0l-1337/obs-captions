@@ -81,14 +81,19 @@ device = ""           # 빈값=기본 루프백 장치. 특정 장치는 이름/
 | `xai` | **실시간 스트리밍** | `XAI_API_KEY` | Grok `grok-transcribe` (wss) |
 | `openrouter` | 배치/근실시간(utterance) | `OPENROUTER_API_KEY` | Whisper(`whisper-large-v3-turbo` 등). 스트리밍 미지원 → VAD 세그먼트 단위 |
 | `replicate` | 배치/근실시간(utterance) | `REPLICATE_API_TOKEN` | Whisper / incredibly-fast-whisper. 콜드스타트 지연 있음 |
+| `assemblyai` | **실시간 스트리밍** | `ASSEMBLYAI_API_KEY` | Universal Streaming v3 (`universal-streaming-english`). 한국어 스트리밍은 미확인 |
+| `deepgram` | **실시간 스트리밍** | `DEEPGRAM_API_KEY` | Nova-3 live streaming (기본 모델 `nova-3`) |
+| `groq` | utterance-mode | `GROQ_API_KEY` | Whisper(`whisper-large-v3-turbo`) 배치 전사. VAD 세그먼트 단위 |
+| `azure` | **실시간 스트리밍**(SDK) | `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` | Azure Cognitive Services Speech SDK. `uv sync --extra azure` 필요 |
 
 - **실시간 스트리밍**: 발화 중 partial 자막이 실시간 갱신.
-- **utterance-mode**(openrouter/replicate): VAD가 끊은 발화 구간을 전송→확정 자막만 표시(약간의 지연). 저지연이 핵심이면 `local`/`openai`/`elevenlabs`/`google`/`xai` 권장.
-- 모든 백엔드는 한국어(`language="ko"`)를 지원하며 내부적으로 16kHz mono PCM으로 정규화됩니다.
+- **utterance-mode**(openrouter/replicate/groq): VAD가 끊은 발화 구간을 전송→확정 자막만 표시(약간의 지연). 저지연이 핵심이면 `local`/`openai`/`elevenlabs`/`google`/`xai` 권장.
+- **assemblyai**: 기본 모델(`universal-streaming-english`)은 영어 전용입니다. 한국어 스트리밍은 미확인(미지원 가능성 있음).
+- 모든 백엔드는 내부적으로 16kHz mono PCM으로 정규화됩니다(`assemblyai`는 한국어 미확인 — 위 주의사항 참고).
 
 예시:
 ```toml
-engine = "elevenlabs"          # 또는 local/openai/google/xai/openrouter/replicate
+engine = "elevenlabs"          # 또는 local/openai/google/xai/openrouter/replicate/assemblyai/deepgram/groq/azure
 language = "ko"
 
 [providers.openrouter]

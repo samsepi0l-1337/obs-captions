@@ -16,6 +16,7 @@ dependencies = [
     "sounddevice",
     "python-dotenv",
     "click",
+    "httpx",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,7 @@ bench = ["psutil>=5.9"]
 # Windows desktop/system-audio (WASAPI) loopback capture (config audio.source="loopback").
 # PyAudioWPatch ships Windows-only wheels; the marker keeps macOS/Linux `uv sync` clean.
 loopback = ["pyaudiowpatch; platform_system == 'Windows'"]
+azure = ["azure-cognitiveservices-speech"]
 
 [project.scripts]
 obs-captions = "obs_captions.cli:cli"

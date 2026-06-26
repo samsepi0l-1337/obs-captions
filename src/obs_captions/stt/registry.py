@@ -130,4 +130,64 @@ def create_backend(
             kwargs["model"] = provider_cfg.model
         return build_google_backend(**kwargs, **common)
 
+    if engine == "assemblyai":
+        from obs_captions.stt.assemblyai import AssemblyAIRealtimeBackend
+
+        api_key = os.environ.get("ASSEMBLYAI_API_KEY") or ""
+        if not api_key:
+            raise ValueError("ASSEMBLYAI_API_KEY must be set in .env to use the assemblyai engine.")
+        provider_cfg = cfg.providers.get("assemblyai")
+        kwargs: dict[str, object] = {"api_key": api_key}
+        if provider_cfg and provider_cfg.model:
+            kwargs["model"] = provider_cfg.model
+        return AssemblyAIRealtimeBackend(**kwargs, **common)
+
+    if engine == "deepgram":
+        from obs_captions.stt.deepgram import DeepgramBackend
+
+        api_key = os.environ.get("DEEPGRAM_API_KEY") or ""
+        if not api_key:
+            raise ValueError("DEEPGRAM_API_KEY must be set in .env to use the deepgram engine.")
+        provider_cfg = cfg.providers.get("deepgram")
+        kwargs = {"api_key": api_key}
+        if provider_cfg and provider_cfg.model:
+            kwargs["model"] = provider_cfg.model
+        return DeepgramBackend(**kwargs, **common)
+
+    if engine == "groq":
+        from obs_captions.stt.groq import GroqBackend
+
+        api_key = os.environ.get("GROQ_API_KEY") or ""
+        if not api_key:
+            raise ValueError("GROQ_API_KEY must be set in .env to use the groq engine.")
+        provider_cfg = cfg.providers.get("groq")
+        kwargs = {"api_key": api_key}
+        if provider_cfg and provider_cfg.model:
+            kwargs["model"] = provider_cfg.model
+        return GroqBackend(**kwargs, **common)
+
+    if engine == "azure":
+        from obs_captions.stt.azure import AzureBackend
+
+        api_key = os.environ.get("AZURE_SPEECH_KEY") or ""
+        if not api_key:
+            raise ValueError("AZURE_SPEECH_KEY must be set in .env to use the azure engine.")
+        provider_cfg = cfg.providers.get("azure")
+        # Design intent (AC 3): region is resolved as providers.azure.region OR
+        # AZURE_SPEECH_REGION env var.  providers.azure.region is a valid config-file
+        # override that intentionally suppresses the env-var ValueError — the user has
+        # explicitly provided the region in config, so the env var is not required.
+        region = (provider_cfg.region if provider_cfg else None) or os.environ.get(
+            "AZURE_SPEECH_REGION"
+        ) or ""
+        if not region:
+            raise ValueError("AZURE_SPEECH_REGION must be set in .env (or providers.azure.region) to use the azure engine.")
+        return AzureBackend(
+            api_key=api_key,
+            region=region,
+            language=common["language"],
+            on_partial=common["on_partial"],
+            on_final=common["on_final"],
+        )
+
     raise ValueError(f"Unknown engine: '{engine}'")

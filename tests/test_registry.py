@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from obs_captions.stt.base import Transcript
@@ -164,3 +166,244 @@ def test_streaming_engines_missing_key_raise(monkeypatch, engine, env_key, match
     cfg = AppConfig(engine=engine)
     with pytest.raises(ValueError, match=match):
         create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+# ---------------------------------------------------------------------------
+# AssemblyAI
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assemblyai_engine_returns_correct_backend(monkeypatch):
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "aai-test")
+    from obs_captions.config import AppConfig
+    from obs_captions.stt.assemblyai import AssemblyAIRealtimeBackend
+
+    cfg = AppConfig(engine="assemblyai")
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, AssemblyAIRealtimeBackend)
+    assert backend.language == cfg.language
+
+
+@pytest.mark.asyncio
+async def test_assemblyai_engine_uses_provider_model(monkeypatch):
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "aai-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.assemblyai import AssemblyAIRealtimeBackend
+
+    cfg = AppConfig(
+        engine="assemblyai",
+        providers={"assemblyai": ProviderConfig(model="universal-streaming-multilingual")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, AssemblyAIRealtimeBackend)
+    assert backend.model == "universal-streaming-multilingual"
+
+
+@pytest.mark.asyncio
+async def test_assemblyai_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("ASSEMBLYAI_API_KEY", raising=False)
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="assemblyai")
+    with pytest.raises(ValueError, match="ASSEMBLYAI_API_KEY"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+@pytest.mark.asyncio
+async def test_assemblyai_registry_forwards_api_key(monkeypatch):
+    """Registry must explicitly pass api_key= to AssemblyAIRealtimeBackend constructor."""
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "aai-forwarded")
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="assemblyai")
+    with patch("obs_captions.stt.assemblyai.AssemblyAIRealtimeBackend.__init__", return_value=None) as mock_init:
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+    call_kwargs = mock_init.call_args.kwargs
+    assert call_kwargs.get("api_key") == "aai-forwarded", (
+        "Registry must forward api_key= explicitly; backend fallback to env var is not sufficient"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deepgram
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_deepgram_engine_returns_correct_backend(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test")
+    from obs_captions.config import AppConfig
+    from obs_captions.stt.deepgram import DeepgramBackend
+
+    cfg = AppConfig(engine="deepgram")
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, DeepgramBackend)
+    assert backend.language == cfg.language
+
+
+@pytest.mark.asyncio
+async def test_deepgram_engine_uses_provider_model(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.deepgram import DeepgramBackend
+
+    cfg = AppConfig(
+        engine="deepgram",
+        providers={"deepgram": ProviderConfig(model="nova-2")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, DeepgramBackend)
+    assert backend.model == "nova-2"
+
+
+@pytest.mark.asyncio
+async def test_deepgram_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="deepgram")
+    with pytest.raises(ValueError, match="DEEPGRAM_API_KEY"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+@pytest.mark.asyncio
+async def test_deepgram_registry_forwards_api_key(monkeypatch):
+    """Registry must explicitly pass api_key= to DeepgramBackend constructor."""
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-forwarded")
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="deepgram")
+    with patch("obs_captions.stt.deepgram.DeepgramBackend.__init__", return_value=None) as mock_init:
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+    call_kwargs = mock_init.call_args.kwargs
+    assert call_kwargs.get("api_key") == "dg-forwarded", (
+        "Registry must forward api_key= explicitly; backend fallback to env var is not sufficient"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Groq
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_groq_engine_returns_correct_backend(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test")
+    from obs_captions.config import AppConfig
+    from obs_captions.stt.groq import GroqBackend
+
+    cfg = AppConfig(engine="groq")
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, GroqBackend)
+    assert backend.language == cfg.language
+
+
+@pytest.mark.asyncio
+async def test_groq_engine_uses_provider_model(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.groq import GroqBackend
+
+    cfg = AppConfig(
+        engine="groq",
+        providers={"groq": ProviderConfig(model="whisper-large-v3")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, GroqBackend)
+    assert backend.model == "whisper-large-v3"
+
+
+@pytest.mark.asyncio
+async def test_groq_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="groq")
+    with pytest.raises(ValueError, match="GROQ_API_KEY"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+@pytest.mark.asyncio
+async def test_groq_registry_forwards_api_key(monkeypatch):
+    """Registry must explicitly pass api_key= to GroqBackend constructor."""
+    monkeypatch.setenv("GROQ_API_KEY", "groq-forwarded")
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="groq")
+    with patch("obs_captions.stt.groq.GroqBackend.__init__", return_value=None) as mock_init:
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+    call_kwargs = mock_init.call_args.kwargs
+    assert call_kwargs.get("api_key") == "groq-forwarded", (
+        "Registry must forward api_key= explicitly; backend fallback to env var is not sufficient"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Azure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_azure_engine_returns_correct_backend(monkeypatch):
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    from obs_captions.config import AppConfig
+    from obs_captions.stt.azure import AzureBackend
+
+    cfg = AppConfig(engine="azure")
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, AzureBackend)
+    assert backend.language == cfg.language
+
+
+@pytest.mark.asyncio
+async def test_azure_missing_speech_key_raises(monkeypatch):
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="azure")
+    with pytest.raises(ValueError, match="AZURE_SPEECH_KEY"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+@pytest.mark.asyncio
+async def test_azure_missing_region_raises(monkeypatch):
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.delenv("AZURE_SPEECH_REGION", raising=False)
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="azure")
+    with pytest.raises(ValueError, match="AZURE_SPEECH_REGION"):
+        create_backend(cfg, on_partial=_noop, on_final=_noop)
+
+
+@pytest.mark.asyncio
+async def test_azure_region_from_provider_config(monkeypatch):
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.delenv("AZURE_SPEECH_REGION", raising=False)
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.azure import AzureBackend
+
+    cfg = AppConfig(engine="azure", providers={"azure": ProviderConfig(region="westus")})
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, AzureBackend)
+    assert backend._region == "westus"
+
+
+@pytest.mark.asyncio
+async def test_azure_model_kwarg_never_forwarded(monkeypatch):
+    """model= must never be passed to AzureBackend (it has no **kwargs and no model param)."""
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.azure import AzureBackend
+
+    cfg = AppConfig(
+        engine="azure",
+        providers={"azure": ProviderConfig(model="should-be-ignored", region="eastus")},
+    )
+    # Must not raise TypeError (which would happen if model= were forwarded to AzureBackend)
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, AzureBackend)

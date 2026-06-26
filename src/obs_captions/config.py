@@ -20,6 +20,8 @@ class ProviderConfig(BaseModel):
     # "global" is invalid). project_id falls back to env GOOGLE_CLOUD_PROJECT.
     location: str | None = None
     project_id: str | None = None
+    # azure: service region override (falls back to env AZURE_SPEECH_REGION)
+    region: str | None = None
 
 
 class AudioConfig(BaseModel):
@@ -93,9 +95,10 @@ class ObsConfig(BaseModel):
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    engine: Literal["local", "openai", "elevenlabs", "google", "xai", "openrouter", "replicate"] = (
-        "local"
-    )
+    engine: Literal[
+        "local", "openai", "elevenlabs", "google", "xai", "openrouter", "replicate",
+        "assemblyai", "azure", "deepgram", "groq",
+    ] = "local"
     language: str = "ko"
     audio: AudioConfig = Field(default_factory=AudioConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
