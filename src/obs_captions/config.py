@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from obs_captions.text import ReplacementRule as ReplacementRule  # re-export
 
 
 class ProviderConfig(BaseModel):
@@ -92,6 +94,38 @@ class ObsConfig(BaseModel):
         return os.getenv("OBS_WS_PASSWORD") or None
 
 
+class TextConfig(BaseModel):
+    """Live-caption text transformation: replacements and word filter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    replacements: list[ReplacementRule] = Field(default_factory=list)
+    filter_words: list[str] = Field(default_factory=list)
+    filter_mode: Literal["mask", "remove"] = "mask"
+    filter_mask: str = "***"
+
+    @model_validator(mode="after")
+    def _strip_blank_filter_words(self) -> "TextConfig":
+        """Strip blank/whitespace-only strings from filter_words at config-load.
+
+        An empty string in filter_words would build the pattern r'\\b\\b' which
+        matches at every word boundary, silently corrupting all captions.
+        Finding 2 fix: reject them here (fail-fast at config-load).
+        """
+        self.filter_words = [w for w in self.filter_words if w.strip()]
+        return self
+
+
+class ExportConfig(BaseModel):
+    """Transcript export to subtitle files (TXT / SRT / WebVTT)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    path: str = "captions.srt"
+    format: Literal["txt", "srt", "vtt"] = "srt"  # noqa: A003
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +140,8 @@ class AppConfig(BaseModel):
     local: LocalConfig = Field(default_factory=LocalConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     obs: ObsConfig = Field(default_factory=ObsConfig)
+    text: TextConfig = Field(default_factory=TextConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig)
 
     @property
     def openai_api_key(self) -> str | None:

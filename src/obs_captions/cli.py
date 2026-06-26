@@ -71,7 +71,7 @@ def serve_command(config_path: str | None, demo: bool) -> None:  # pragma: no co
     asyncio.run(_serve(config_path, demo))
 
 
-async def _serve(config_path: str | None, demo: bool) -> None:  # pragma: no cover  # requires a live uvicorn server
+async def _serve(config_path: str | None, demo: bool) -> None:
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state
 
@@ -81,23 +81,33 @@ async def _serve(config_path: str | None, demo: bool) -> None:  # pragma: no cov
     wire_caption_state(state, hub, loop=asyncio.get_running_loop())
     app = create_app(hub, overlay_dir=_overlay_dir(), config=config)
 
-    demo_task: asyncio.Task[None] | None = None
-    if demo:
-        backend = FakeBackend(
-            language=config.language, on_partial=state.on_partial, on_final=state.on_final
-        )
-        demo_task = asyncio.create_task(_run_demo_backend(backend))
+    # Finding 4/7 fix: use ExitStack so export_sink.stop() is guaranteed even if
+    # FakeBackend() or asyncio.create_task() raises before the try/finally below
+    # (mirrors the ExitStack pattern already used in _run).
+    with contextlib.ExitStack() as _cleanup:
+        export_sink = _setup_export_sink(config)
+        if export_sink is not None:
+            _cleanup.callback(export_sink.stop)
+        on_partial, on_final = _build_caption_callbacks(config, state, export_sink)
 
-    server = uvicorn.Server(
-        uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")
-    )
-    try:
-        await server.serve()
-    finally:
-        if demo_task is not None:
-            demo_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await demo_task
+        demo_task: asyncio.Task[None] | None = None
+        if demo:
+            backend = FakeBackend(
+                language=config.language, on_partial=on_partial, on_final=on_final
+            )
+            demo_task = asyncio.create_task(_run_demo_backend(backend))
+
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")
+        )
+        try:
+            await server.serve()
+        finally:
+            if demo_task is not None:
+                demo_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await demo_task
+            # export_sink.stop() is handled by ExitStack when the with-block exits
 
 
 def make_capture(
@@ -148,7 +158,48 @@ def make_capture(
     )
 
 
-async def _run(config_path: str | None, sink: str = "browser") -> None:  # pragma: no cover  # requires live audio capture + uvicorn server
+def _setup_export_sink(cfg: Any) -> Any | None:
+    """Create and start a TranscriptExportSink when export is enabled; return None otherwise.
+
+    Extracted so that both _serve and _run share identical sink-lifecycle logic and
+    tests can exercise the creation + start path without a live audio/server layer.
+    """
+    if not cfg.export.enabled:
+        return None
+    from obs_captions.export_sink import TranscriptExportSink
+
+    sink = TranscriptExportSink(cfg.export.path, cfg.export.format)
+    sink.start()
+    return sink
+
+
+def _build_caption_callbacks(cfg: Any, state: Any, export_sink: Any | None = None) -> tuple[Any, Any]:
+    """Return (on_partial, on_final) callables that apply text transforms then notify *state*.
+
+    When *export_sink* is provided, each final transcript is also forwarded to it
+    after the transform.  Both callbacks use dataclasses.replace to produce a new
+    frozen Transcript rather than mutating the original.
+    """
+    from dataclasses import replace as dc_replace
+
+    from obs_captions.text import transform_text
+
+    def _t(tr: Any) -> Any:
+        return dc_replace(tr, text=transform_text(tr.text, cfg.text))
+
+    def on_partial(tr: Any) -> None:
+        state.on_partial(_t(tr))
+
+    def on_final(tr: Any) -> None:
+        t = _t(tr)
+        state.on_final(t)
+        if export_sink is not None:
+            export_sink.on_final(t)
+
+    return on_partial, on_final
+
+
+async def _run(config_path: str | None, sink: str = "browser") -> None:
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state
     from obs_captions.stt.registry import create_backend
@@ -171,39 +222,50 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:  # pragm
             uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")
         )
 
-    if use_obs:
+    if use_obs:  # pragma: no cover
         from obs_captions.obs_sink import ObsTextSink
 
         obs_sink = ObsTextSink(state=state, config=config)
         await obs_sink.start()
 
-    backend = create_backend(config, on_partial=state.on_partial, on_final=state.on_final)
-    capture = make_capture(config)
-    is_local = config.engine == "local"
-    vad_threshold = config.local.vad_threshold if is_local else 0.5
-    min_silence_ms = config.local.min_silence_ms if is_local else 500
-    vad = SileroVad(threshold=vad_threshold)
-    segmenter = UtteranceSegmenter(
-        vad=vad,
-        frame_ms=100,
-        min_silence_ms=min_silence_ms,
-    )
-    audio_task = asyncio.create_task(_capture_to_backend(capture, segmenter, backend))
+    # Finding 1 fix: use ExitStack to register export_sink.stop() immediately
+    # after start() so it runs even if create_backend / make_capture / SileroVad
+    # raise below — prevents the export file from being left truncated and open.
+    with contextlib.ExitStack() as _cleanup:
+        export_sink = _setup_export_sink(config)
+        if export_sink is not None:
+            _cleanup.callback(export_sink.stop)
+        on_partial, on_final = _build_caption_callbacks(config, state, export_sink)
+        backend = create_backend(config, on_partial=on_partial, on_final=on_final)
+        capture = make_capture(config)
+        is_local = config.engine == "local"
+        vad_threshold = config.local.vad_threshold if is_local else 0.5
+        min_silence_ms = config.local.min_silence_ms if is_local else 500
+        vad = SileroVad(threshold=vad_threshold)
+        segmenter = UtteranceSegmenter(
+            vad=vad,
+            frame_ms=100,
+            min_silence_ms=min_silence_ms,
+        )
+        audio_task = asyncio.create_task(_capture_to_backend(capture, segmenter, backend))
 
-    try:
-        if use_browser:
-            await uv_server.serve()
-        else:
-            # obs-only: run until interrupted
-            await asyncio.Event().wait()
-    finally:
-        audio_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await audio_task
-        await capture.stop()
-        await backend.stop_stream()
-        if obs_sink is not None:
-            await obs_sink.stop()
+        try:
+            if use_browser:
+                await uv_server.serve()
+            else:
+                await asyncio.Event().wait()  # pragma: no cover
+        finally:
+            audio_task.cancel()
+            # Finding 2 fix: suppress both CancelledError and regular exceptions
+            # so an OSError from an audio device disconnect does not bypass the
+            # remaining cleanup steps (capture.stop / backend.stop_stream).
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await audio_task
+            await capture.stop()
+            await backend.stop_stream()
+            if obs_sink is not None:  # pragma: no cover
+                await obs_sink.stop()
+            # export_sink.stop() is handled by ExitStack when the with-block exits
 
 
 async def _capture_to_backend(capture, segmenter, backend) -> None:
@@ -266,6 +328,7 @@ def check_engine_command(
     config_path: str | None,
 ) -> None:
     """Smoke-test ENGINE: validates API key/region and optionally streams audio."""
+    from obs_captions.check_engine import _check_engine
     try:
         exit_code = asyncio.run(_check_engine(engine, wav_path, seconds, language, config_path))
     except Exception as exc:  # noqa: BLE001
@@ -273,116 +336,6 @@ def check_engine_command(
         sys.exit(1)
     else:
         sys.exit(exit_code)
-
-
-async def _check_engine(
-    engine: str,
-    wav_path: str | None,
-    seconds: int,
-    language: str | None,
-    config_path: str | None,
-) -> int:
-    """Return 0 on success, 1 on failure."""
-    from obs_captions.stt.registry import create_backend
-
-    config = load_config(config_path)
-    # Override engine + language for this smoke run without mutating the model.
-    object.__setattr__(config, "engine", engine)  # type: ignore[arg-type]
-    if language is not None:
-        object.__setattr__(config, "language", language)  # type: ignore[arg-type]
-
-    finals: list[str] = []
-    partials: list[str] = []
-
-    def on_partial(t: Any) -> None:
-        partials.append(t.text)
-        click.echo(f"[partial] {t.text}")
-
-    def on_final(t: Any) -> None:
-        finals.append(t.text)
-        click.echo(f"[final]   {t.text}")
-
-    try:
-        backend = create_backend(config, on_partial=on_partial, on_final=on_final)
-    except ValueError as exc:
-        click.echo(f"ERROR: {exc}", err=True)
-        return 1
-
-    await backend.start_stream()
-
-    try:
-        if wav_path is not None:
-            await _stream_wav(backend, wav_path, seconds)
-            await backend.flush()
-            # Wait briefly for in-flight transcript events from streaming providers
-            # (e.g. AssemblyAI/Deepgram) whose flush() is a no-op and whose recv
-            # loop processes events asynchronously.  We poll up to the remaining
-            # deadline for at least one final before stopping.
-            deadline = asyncio.get_running_loop().time() + seconds
-            while not finals and asyncio.get_running_loop().time() < deadline:
-                await asyncio.sleep(0.05)
-        else:
-            click.echo(f"Connectivity check for engine '{engine}' — no WAV provided, stopping immediately.")
-    finally:
-        await backend.stop_stream()
-
-    if wav_path is not None:
-        n_finals = len(finals)
-        n_partials = len(partials)
-        if n_finals == 0:
-            click.echo(
-                "WARNING: 0 final(s) received after streaming WAV — "
-                "provider may not have transcribed audio.",
-                err=True,
-            )
-        click.echo(f"Done. {n_finals} final(s), {n_partials} partial(s) received.")
-    else:
-        click.echo(f"Engine '{engine}' started and stopped successfully.")
-    return 0
-
-
-async def _stream_wav(backend: Any, wav_path: str, max_seconds: int) -> None:
-    """Read a WAV file and feed PCM16 chunks into the backend."""
-    import wave
-
-    chunk_samples = 1600  # 100 ms of 16 kHz mono
-    deadline = asyncio.get_running_loop().time() + max_seconds
-
-    with wave.open(wav_path, "rb") as wf:
-        src_rate = wf.getframerate()
-        src_channels = wf.getnchannels()
-        src_width = wf.getsampwidth()
-        raw = wf.readframes(wf.getnframes())
-
-    # Normalize to 16-bit PCM
-    if src_width != 2:
-        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
-
-        raw = audioop.lin2lin(raw, src_width, 2)
-
-    # Mix down to mono if stereo
-    if src_channels > 1:
-        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
-
-        raw = audioop.tomono(raw, 2, 0.5, 0.5)
-
-    # Resample to 16000 Hz if needed
-    if src_rate != 16000:
-        import audioop  # noqa: PLC0415  # TODO: migrate to numpy when Python 3.13 is supported (audioop removed in 3.13)  # noqa: DEP001
-
-        raw, _ = audioop.ratecv(raw, 2, 1, src_rate, 16000, None)
-
-    # Feed in 100ms chunks
-    offset = 0
-    chunk_bytes = chunk_samples * 2
-    while offset < len(raw):
-        if asyncio.get_running_loop().time() >= deadline:
-            click.echo(f"[check-engine] Reached {max_seconds}s limit.", err=True)
-            break
-        chunk = raw[offset : offset + chunk_bytes]
-        await backend.feed_audio(chunk)
-        offset += chunk_bytes
-        await asyncio.sleep(0.1)
 
 
 def _overlay_dir() -> Path:  # pragma: no cover  # only called from _serve/_run which requires a live server

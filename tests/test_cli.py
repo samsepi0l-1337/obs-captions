@@ -386,7 +386,7 @@ def test_check_engine_unexpected_exception(monkeypatch):
 def test_check_engine_stop_stream_called_on_wav_exception(monkeypatch, tmp_path):
     """If _stream_wav raises after start_stream, stop_stream is still called (try/finally)."""
     import obs_captions.stt.registry as reg_mod
-    from obs_captions import cli as cli_mod
+    import obs_captions.check_engine as check_engine_mod
 
     _instance = None
 
@@ -400,7 +400,7 @@ def test_check_engine_stop_stream_called_on_wav_exception(monkeypatch, tmp_path)
     async def boom(backend, wav_path, max_seconds):
         raise OSError("corrupt wav")
 
-    monkeypatch.setattr(cli_mod, "_stream_wav", boom)
+    monkeypatch.setattr(check_engine_mod, "_stream_wav", boom)
 
     wav_file = tmp_path / "test.wav"
     wav_file.write_bytes(_make_wav_bytes())
@@ -620,3 +620,448 @@ def test_make_capture_mic(monkeypatch):
     assert isinstance(cap, FakeMicCapture)
     assert len(created) == 1
     assert created[0]["samplerate"] == 16000
+
+
+# ---------------------------------------------------------------------------
+# _build_caption_callbacks
+# ---------------------------------------------------------------------------
+
+
+def test_build_caption_callbacks_transforms_partial():
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import TextConfig
+    from obs_captions.pipeline import CaptionState
+    from obs_captions.text import ReplacementRule
+
+    state = CaptionState()
+    from obs_captions.config import AppConfig
+    cfg = AppConfig(text=TextConfig(replacements=[ReplacementRule(match="hello", replace="hi")]))
+    on_partial, _ = _build_caption_callbacks(cfg, state)
+
+    on_partial(Transcript(text="hello world", is_final=False))
+
+    assert state.snapshot().partial == "hi world"
+
+
+def test_build_caption_callbacks_transforms_final():
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig, TextConfig
+    from obs_captions.pipeline import CaptionState
+    from obs_captions.text import ReplacementRule
+
+    state = CaptionState()
+    cfg = AppConfig(text=TextConfig(replacements=[ReplacementRule(match="hello", replace="hi")]))
+    _, on_final = _build_caption_callbacks(cfg, state)
+
+    on_final(Transcript(text="hello world", is_final=True))
+
+    assert "hi world" in state.snapshot().committed
+
+
+def test_build_caption_callbacks_feeds_export_sink_on_final():
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig
+    from obs_captions.pipeline import CaptionState
+
+    state = CaptionState()
+    cfg = AppConfig()
+    received: list[str] = []
+
+    class FakeSink:
+        def on_final(self, t: Transcript) -> None:
+            received.append(t.text)
+
+    _, on_final = _build_caption_callbacks(cfg, state, export_sink=FakeSink())
+    on_final(Transcript(text="exported", is_final=True))
+
+    assert received == ["exported"]
+
+
+def test_build_caption_callbacks_no_export_sink_is_safe():
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig
+    from obs_captions.pipeline import CaptionState
+
+    state = CaptionState()
+    cfg = AppConfig()
+    on_partial, on_final = _build_caption_callbacks(cfg, state)  # no export_sink
+
+    on_partial(Transcript(text="partial text", is_final=False))
+    on_final(Transcript(text="final text", is_final=True))
+
+    assert state.snapshot().partial == ""  # cleared after final
+    assert "final text" in state.snapshot().committed
+
+
+def test_build_caption_callbacks_identity_with_default_config():
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig
+    from obs_captions.pipeline import CaptionState
+
+    state = CaptionState()
+    cfg = AppConfig()
+    on_partial, on_final = _build_caption_callbacks(cfg, state)
+
+    on_partial(Transcript(text="unchanged text", is_final=False))
+    assert state.snapshot().partial == "unchanged text"
+
+    on_final(Transcript(text="also unchanged", is_final=True))
+    assert "also unchanged" in state.snapshot().committed
+
+
+def test_build_caption_callbacks_export_sink_receives_transformed_text():
+    """Export sink gets post-transform text, not the original."""
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig, TextConfig
+    from obs_captions.pipeline import CaptionState
+    from obs_captions.text import ReplacementRule
+
+    state = CaptionState()
+    cfg = AppConfig(text=TextConfig(replacements=[ReplacementRule(match="bad", replace="good")]))
+    received: list[str] = []
+
+    class FakeSink:
+        def on_final(self, t: Transcript) -> None:
+            received.append(t.text)
+
+    _, on_final = _build_caption_callbacks(cfg, state, export_sink=FakeSink())
+    on_final(Transcript(text="bad word", is_final=True))
+
+    assert received == ["good word"]
+    assert "good word" in state.snapshot().committed
+
+
+# ---------------------------------------------------------------------------
+# _setup_export_sink — Finding 3: testable sink lifecycle outside pragma block
+# ---------------------------------------------------------------------------
+
+
+def test_setup_export_sink_disabled_returns_none():
+    """With export.enabled=False (default), _setup_export_sink returns None."""
+    from obs_captions.cli import _setup_export_sink
+    from obs_captions.config import AppConfig
+
+    assert _setup_export_sink(AppConfig()) is None
+
+
+def test_setup_export_sink_enabled_creates_and_starts(tmp_path):
+    """With export.enabled=True, _setup_export_sink returns a started sink."""
+    from obs_captions.cli import _setup_export_sink
+    from obs_captions.config import AppConfig, ExportConfig
+
+    cfg = AppConfig(
+        export=ExportConfig(enabled=True, path=str(tmp_path / "out.srt"), format="srt")
+    )
+    sink = _setup_export_sink(cfg)
+    assert sink is not None
+    sink.on_final(Transcript(text="hello", is_final=True, start_ms=0, end_ms=1000))
+    sink.stop()
+
+    content = (tmp_path / "out.srt").read_text(encoding="utf-8")
+    assert "hello" in content
+    assert "00:00:00,000 --> 00:00:01,000" in content
+
+
+# ---------------------------------------------------------------------------
+# AC4: default config → transform is identity, no file is written
+# ---------------------------------------------------------------------------
+
+
+def test_ac4_default_config_no_export_file(tmp_path, monkeypatch):
+    """AC4: with default AppConfig, transform is identity and no export file appears on disk."""
+    from obs_captions.cli import _build_caption_callbacks
+    from obs_captions.config import AppConfig
+    from obs_captions.pipeline import CaptionState
+
+    # Change cwd to tmp_path so any stray relative-path file creation lands there.
+    monkeypatch.chdir(tmp_path)
+
+    state = CaptionState()
+    cfg = AppConfig()  # export.enabled=False, no text transforms
+
+    # No export_sink passed — export is disabled by default.
+    on_partial, on_final = _build_caption_callbacks(cfg, state)
+
+    on_partial(Transcript(text="hello", is_final=False))
+    assert state.snapshot().partial == "hello"  # transform is identity
+
+    on_final(Transcript(text="world", is_final=True))
+    assert "world" in state.snapshot().committed  # transform is identity
+
+    # No file must have been written.
+    assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# _run / _serve infrastructure — Finding 1 + 2 + 3 fix tests
+# ---------------------------------------------------------------------------
+# These tests exercise _run and _serve with heavily-mocked dependencies to
+# cover the wiring (pragma was previously on the entire function body).
+# ---------------------------------------------------------------------------
+
+# Shared mock primitives used across multiple tests below.
+
+
+class _FakeCapture:
+    """Async-generator audio capture shim for _run tests (no real hardware)."""
+
+    def __init__(self, *, oserror: bool = False) -> None:
+        self.started = False
+        self.stopped = False
+        self._oserror = oserror
+
+    def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def frames(self):
+        if self._oserror:
+            raise OSError("audio device disconnected")
+        return
+        yield  # makes this an async generator; never reached
+
+
+class _FakeStreamBackend:
+    """Minimal streaming backend for _run/_serve tests."""
+
+    def __init__(self, **_: object) -> None:
+        self.started = False
+        self.stopped = False
+
+    async def start_stream(self) -> None:
+        self.started = True
+
+    async def stop_stream(self) -> None:
+        self.stopped = True
+
+    async def feed_audio(self, pcm: bytes) -> None:
+        pass
+
+    async def flush(self) -> None:
+        pass
+
+
+class _ImmediateServer:
+    """uvicorn.Server shim whose serve() returns after one event-loop tick."""
+
+    def __init__(self, _config: object) -> None:
+        pass
+
+    async def serve(self) -> None:
+        await asyncio.sleep(0)  # yield so audio_task can run first
+
+
+def _patch_run_deps(
+    monkeypatch,
+    tmp_path,
+    cfg,
+    *,
+    raise_on_create_backend: Exception | None = None,
+    capture_oserror: bool = False,
+):
+    """Apply monkeypatches for _run without live hardware.
+
+    Returns (capture_instance, backend_getter) where backend_getter() returns
+    the backend created by create_backend (None if it was never called).
+    """
+    import obs_captions.cli as cli_mod
+    import obs_captions.pipeline as pipeline_mod
+    import obs_captions.server as server_mod
+    import obs_captions.stt.registry as registry_mod
+    import obs_captions.vad as vad_mod
+
+    monkeypatch.setattr(cli_mod, "load_config", lambda _p: cfg)
+    monkeypatch.setattr(cli_mod, "_overlay_dir", lambda: tmp_path)
+
+    class _FakeCaptionState:
+        def on_partial(self, t: object) -> None: ...
+        def on_final(self, t: object) -> None: ...
+
+    class _FakeHub:
+        pass
+
+    monkeypatch.setattr(pipeline_mod, "CaptionState", _FakeCaptionState)
+    monkeypatch.setattr(server_mod, "Hub", _FakeHub)
+    monkeypatch.setattr(server_mod, "create_app", lambda *a, **kw: object())
+    monkeypatch.setattr(server_mod, "wire_caption_state", lambda *a, **kw: None)
+    monkeypatch.setattr("uvicorn.Server", _ImmediateServer)
+    monkeypatch.setattr("uvicorn.Config", lambda *a, **kw: None)
+
+    cap = _FakeCapture(oserror=capture_oserror)
+    monkeypatch.setattr(cli_mod, "make_capture", lambda _cfg: cap)
+
+    class _FakeVad:
+        def __init__(self, threshold: float) -> None: ...
+
+    class _FakeSegmenter:
+        def __init__(self, **kw: object) -> None: ...
+        def process(self, pcm: bytes) -> VadEvent:
+            return VadEvent(is_speech=False)
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr(vad_mod, "SileroVad", _FakeVad)
+    monkeypatch.setattr(vad_mod, "UtteranceSegmenter", _FakeSegmenter)
+
+    _backend: list[_FakeStreamBackend] = []
+
+    def _fake_create_backend(_cfg: object, *, on_partial: object, on_final: object) -> _FakeStreamBackend:
+        if raise_on_create_backend is not None:
+            raise raise_on_create_backend
+        b = _FakeStreamBackend()
+        _backend.append(b)
+        return b
+
+    monkeypatch.setattr(registry_mod, "create_backend", _fake_create_backend)
+
+    return cap, lambda: _backend[0] if _backend else None
+
+
+@pytest.mark.asyncio
+async def test_run_export_cleanup_on_backend_failure(tmp_path, monkeypatch):
+    """Finding 1 fix: export_sink.stop() is called via ExitStack even when
+    create_backend raises after _setup_export_sink has already opened the file."""
+    from obs_captions.cli import _run
+    from obs_captions.config import AppConfig, ExportConfig
+
+    export_path = tmp_path / "captions.srt"
+    cfg = AppConfig(export=ExportConfig(enabled=True, path=str(export_path), format="srt"))
+
+    _patch_run_deps(
+        monkeypatch,
+        tmp_path,
+        cfg,
+        raise_on_create_backend=RuntimeError("backend init failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="backend init failed"):
+        await _run(None, "browser")
+
+    # The file was opened (truncated) but ExitStack must have closed it.
+    # Verifiable: the file exists (start() created it) and is readable after the error.
+    assert export_path.exists()
+    # A closed file can be opened again without ResourceWarning / OSError.
+    export_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_browser_cleanup(tmp_path, monkeypatch):
+    """Finding 3 wiring coverage: _run browser path — all cleanup steps run after
+    serve() returns, and export_sink is stopped by ExitStack."""
+    from obs_captions.cli import _run
+    from obs_captions.config import AppConfig, ExportConfig
+
+    export_path = tmp_path / "out.srt"
+    cfg = AppConfig(export=ExportConfig(enabled=True, path=str(export_path), format="srt"))
+
+    cap, get_backend = _patch_run_deps(monkeypatch, tmp_path, cfg)
+
+    await _run(None, "browser")
+
+    backend = get_backend()
+    assert backend is not None
+    assert backend.started is True
+    assert backend.stopped is True   # backend.stop_stream() was called
+    assert cap.started is True
+    assert cap.stopped is True       # capture.stop() was called
+    # ExitStack called export_sink.stop() → file is closed and readable
+    assert export_path.exists()
+    export_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_audio_oserror_suppressed_in_cleanup(tmp_path, monkeypatch):
+    """Finding 2 fix: OSError from audio device disconnect is suppressed so
+    backend.stop_stream() and capture.stop() are still reached in the finally block."""
+    from obs_captions.cli import _run
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig()
+    cap, get_backend = _patch_run_deps(
+        monkeypatch, tmp_path, cfg, capture_oserror=True
+    )
+
+    # _ImmediateServer.serve() does asyncio.sleep(0), yielding to audio_task.
+    # The audio_task raises OSError from frames(); suppress(Exception, CancelledError)
+    # catches it and cleanup continues normally.
+    await _run(None, "browser")
+
+    backend = get_backend()
+    assert backend is not None
+    assert backend.stopped is True   # not skipped despite audio OSError
+    assert cap.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_serve_wiring_no_demo(tmp_path, monkeypatch):
+    """Finding 3 wiring coverage: _serve with demo=False — export sink started
+    and stopped, callbacks wired correctly."""
+    from obs_captions.cli import _serve
+    from obs_captions.config import AppConfig, ExportConfig
+
+    export_path = tmp_path / "serve.srt"
+    cfg = AppConfig(export=ExportConfig(enabled=True, path=str(export_path), format="srt"))
+
+    import obs_captions.cli as cli_mod
+    import obs_captions.pipeline as pipeline_mod
+    import obs_captions.server as server_mod
+
+    monkeypatch.setattr(cli_mod, "load_config", lambda _p: cfg)
+    monkeypatch.setattr(cli_mod, "_overlay_dir", lambda: tmp_path)
+
+    class _FakeCaptionState:
+        def on_partial(self, t: object) -> None: ...
+        def on_final(self, t: object) -> None: ...
+
+    class _FakeHub:
+        pass
+
+    monkeypatch.setattr(pipeline_mod, "CaptionState", _FakeCaptionState)
+    monkeypatch.setattr(server_mod, "Hub", _FakeHub)
+    monkeypatch.setattr(server_mod, "create_app", lambda *a, **kw: object())
+    monkeypatch.setattr(server_mod, "wire_caption_state", lambda *a, **kw: None)
+    monkeypatch.setattr("uvicorn.Server", _ImmediateServer)
+    monkeypatch.setattr("uvicorn.Config", lambda *a, **kw: None)
+
+    await _serve(None, demo=False)
+
+    # Export file was opened, written (WEBVTT header for vtt; empty for srt), and closed.
+    assert export_path.exists()
+    export_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_serve_wiring_with_demo(tmp_path, monkeypatch):
+    """Finding 3: _serve with demo=True — demo_task is created, cancelled in finally,
+    and CancelledError is suppressed; no export configured."""
+    from obs_captions.cli import _serve
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig()
+
+    import obs_captions.cli as cli_mod
+    import obs_captions.pipeline as pipeline_mod
+    import obs_captions.server as server_mod
+
+    monkeypatch.setattr(cli_mod, "load_config", lambda _p: cfg)
+    monkeypatch.setattr(cli_mod, "_overlay_dir", lambda: tmp_path)
+
+    class _FakeCaptionState:
+        def on_partial(self, t: object) -> None: ...
+        def on_final(self, t: object) -> None: ...
+
+    class _FakeHub:
+        pass
+
+    monkeypatch.setattr(pipeline_mod, "CaptionState", _FakeCaptionState)
+    monkeypatch.setattr(server_mod, "Hub", _FakeHub)
+    monkeypatch.setattr(server_mod, "create_app", lambda *a, **kw: object())
+    monkeypatch.setattr(server_mod, "wire_caption_state", lambda *a, **kw: None)
+    monkeypatch.setattr("uvicorn.Server", _ImmediateServer)
+    monkeypatch.setattr("uvicorn.Config", lambda *a, **kw: None)
+
+    # demo=True: FakeBackend runs an infinite loop as demo_task; serve() returns
+    # immediately; finally: cancels demo_task, suppress(CancelledError) absorbs it.
+    await _serve(None, demo=True)

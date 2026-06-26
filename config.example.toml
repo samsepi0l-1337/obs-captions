@@ -83,3 +83,47 @@ model = "gemini-3.1-flash-live-preview"
 host = "localhost"
 port = 4455
 source_name = "LiveCaptions"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature: Text replacement / custom dictionary  (default-off — omit to skip)
+# Corrects brand names, terms, or common STT errors before the caption reaches
+# the overlay.  Rules are applied in order; replacements run before the filter.
+# ──────────────────────────────────────────────────────────────────────────────
+[text]
+# filter_words = ["badword", "slur"]   # whole-word, case-insensitive
+# filter_mode  = "mask"                # "mask" (replace with mask str) | "remove" (drop + normalise spaces)
+# filter_mask  = "***"                 # replacement string used when filter_mode = "mask"
+
+# Each [[text.replacements]] block is one substitution rule.
+# Fields: match (required), replace (required), regex (bool=false),
+#         ignore_case (bool=true), whole_word (bool=false).
+# Invalid regex raises an error at config load — fail fast.
+# Note: regex patterns come from this operator-controlled file, so ReDoS
+# (catastrophic backtracking, e.g. (a+)+$) is the operator's own risk.
+# Keep patterns simple and avoid nested quantifiers over wide character classes.
+
+# [[text.replacements]]
+# match  = "whisper"        # literal string to find (default: case-insensitive)
+# replace = "Whisper"
+
+# [[text.replacements]]
+# match  = "open ai"
+# replace = "OpenAI"
+
+# [[text.replacements]]        # regex example
+# match   = "\\bw\\w+"         # TOML: double-escape backslash
+# replace = "WORD"
+# regex   = true
+# ignore_case = true
+# whole_word  = false           # whole_word adds \b…\b around the pattern
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature: Transcript export — write finals to a subtitle file  (default-off)
+# Formats: "txt" (one line per final), "srt" (SubRip), "vtt" (WebVTT).
+# Timestamps use transcript.start_ms/end_ms when available; otherwise elapsed
+# wall-clock from the start of the session is used.
+# ──────────────────────────────────────────────────────────────────────────────
+[export]
+enabled = false
+path    = "captions.srt"   # output file path (relative to cwd or absolute)
+format  = "srt"            # "txt" | "srt" | "vtt"

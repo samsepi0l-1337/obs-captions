@@ -316,5 +316,74 @@ uv run python scripts/benchmark.py --n 200
 
 ---
 
+---
+
+## 라이브 캡션 텍스트 변환 기능
+
+세 가지 기능은 모두 **기본값 OFF** — `config.toml`에 해당 섹션이 없으면 기존 동작과 완전히 동일합니다.
+
+### 기능 1 — 텍스트 치환 / 사용자 사전 (Text Replacement)
+
+STT가 잘못 인식하는 브랜드명, 전문 용어 등을 실시간으로 교정합니다. 치환 → 필터 순서로 적용되므로, 치환 결과를 필터가 다시 처리할 수 있습니다.
+
+```toml
+[[text.replacements]]
+match   = "whisper"    # 찾을 문자열 (기본: 대소문자 무시)
+replace = "Whisper"
+
+[[text.replacements]]
+match   = "\\bw\\w+"   # regex=true 시 정규식 사용 가능
+replace = "WORD"
+regex   = true
+ignore_case = true
+whole_word  = false    # true 시 \b…\b 자동 추가
+```
+
+옵션 | 기본값 | 설명
+-----|--------|-----
+`match` | (필수) | 찾을 문자열 또는 정규식 패턴
+`replace` | (필수) | 치환 문자열
+`regex` | `false` | `true` 시 `match`를 정규식으로 해석 (잘못된 패턴은 설정 로드 시 즉시 오류)
+`ignore_case` | `true` | 대소문자 무시
+`whole_word` | `false` | 단어 경계(`\b`) 적용
+
+### 기능 2 — 단어 필터 / 비속어 차단 (Word Filter)
+
+지정한 단어를 마스크로 교체하거나 제거합니다 (전체 단어, 대소문자 무시).
+
+```toml
+[text]
+filter_words = ["badword", "슬랭"]
+filter_mode  = "mask"    # "mask" | "remove"
+filter_mask  = "***"
+```
+
+옵션 | 기본값 | 설명
+-----|--------|-----
+`filter_words` | `[]` | 필터링할 단어 목록
+`filter_mode` | `"mask"` | `"mask"`: 마스크 문자열로 교체 / `"remove"`: 단어 삭제 + 공백 정규화
+`filter_mask` | `"***"` | `filter_mode="mask"` 시 사용할 문자열
+
+### 기능 3 — 트랜스크립트 내보내기 (Transcript Export)
+
+최종 확정된 자막을 실시간으로 파일에 저장합니다. 스트리밍 중에도 플러시되므로 도중에 종료되어도 기록이 남습니다.
+
+```toml
+[export]
+enabled = true
+path    = "captions.srt"   # 출력 파일 경로
+format  = "srt"            # "txt" | "srt" | "vtt"
+```
+
+포맷 | 설명
+-----|-----
+`txt` | 확정 자막 한 줄씩 기록
+`srt` | SubRip 형식 (타임스탬프 포함)
+`vtt` | WebVTT 형식 (WEBVTT 헤더 자동 작성, 타임스탬프 포함)
+
+타임스탬프는 STT 백엔드가 `start_ms`/`end_ms`를 제공하면 그 값을 사용하고, 없으면 세션 시작부터의 경과 시간으로 대체합니다.
+
+---
+
 ## 라이선스 / 기여
 내부 프로젝트. STT provider 키는 `.env`로만 주입하며 절대 커밋하지 않습니다.
