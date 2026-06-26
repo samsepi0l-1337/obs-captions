@@ -30,6 +30,10 @@ class LocalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model_size: str = "small"
+    # "auto" probes for CUDA and falls back to CPU; "cpu"/"cuda" force the device.
+    device: Literal["auto", "cpu", "cuda"] = "auto"
+    # CTranslate2 compute type; None picks a per-device default (cuda->float16, cpu->int8).
+    compute_type: str | None = None
     cpu_threads: int = 1
     partial_interval_ms: int = 500
     max_buffer_s: float = 30.0

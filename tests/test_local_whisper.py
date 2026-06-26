@@ -3,12 +3,97 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
+import sys
+import types
 import wave
 
 import pytest
 
 from obs_captions.stt import Transcript
+from obs_captions.stt import local_whisper
 from obs_captions.stt.local_whisper import LocalWhisperBackend, tokenize_text
+
+
+def _install_fake_whisper_model(monkeypatch):
+    """Install a fake ``faster_whisper.WhisperModel`` recording constructor kwargs.
+
+    Real ``faster_whisper`` is not importable on hosts without a CUDA-capable
+    CTranslate2 build, so inject a stand-in via ``sys.modules``.
+    """
+    captured: dict[str, object] = {}
+
+    class FakeWhisperModel:
+        def __init__(self, model_size, **kwargs):
+            captured["model_size"] = model_size
+            captured["kwargs"] = kwargs
+
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FakeWhisperModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+    return captured
+
+
+def test_load_model_passes_resolved_device_to_whisper_model(monkeypatch):
+    captured = _install_fake_whisper_model(monkeypatch)
+    seen: dict[str, object] = {}
+
+    def fake_resolve(device, compute_type):
+        seen["device"] = device
+        seen["compute_type"] = compute_type
+        return ("cuda", "float16")
+
+    monkeypatch.setattr(local_whisper, "resolve_device", fake_resolve)
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=lambda _: None,
+        device="auto",
+        compute_type=None,
+        cpu_threads=3,
+    )
+    backend._load_model()
+
+    # The backend forwards its configured (device, compute_type) to the resolver.
+    assert seen == {"device": "auto", "compute_type": None}
+    # The resolved values reach WhisperModel; cpu_threads is still threaded through.
+    assert captured["model_size"] == "small"
+    assert captured["kwargs"]["device"] == "cuda"
+    assert captured["kwargs"]["compute_type"] == "float16"
+    assert captured["kwargs"]["cpu_threads"] == backend.cpu_threads
+
+
+def test_load_model_cpu_int8_regression_with_real_resolver(monkeypatch):
+    """Zero CPU regression: real resolver + no CUDA => device=cpu, compute_type=int8."""
+    captured = _install_fake_whisper_model(monkeypatch)
+    monkeypatch.setitem(sys.modules, "ctranslate2", None)  # force CUDA probe to fail
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=lambda _: None,
+        cpu_threads=1,
+    )  # defaults: device="auto", compute_type=None
+    backend._load_model()
+
+    assert captured["kwargs"]["device"] == "cpu"
+    assert captured["kwargs"]["compute_type"] == "int8"
+    assert captured["kwargs"]["cpu_threads"] == backend.cpu_threads
+
+
+def test_backend_stores_device_and_compute_type():
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=lambda _: None,
+        device="cuda",
+        compute_type="float16",
+    )
+    assert backend.device == "cuda"
+    assert backend.compute_type == "float16"
+
+
+def test_backend_device_defaults_are_auto_and_none():
+    backend = LocalWhisperBackend(on_partial=lambda _: None, on_final=lambda _: None)
+    assert backend.device == "auto"
+    assert backend.compute_type is None
 
 
 def test_tokenize_text_prefers_words_and_supports_unspaced_korean():

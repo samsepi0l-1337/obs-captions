@@ -15,6 +15,12 @@ from obs_captions.stt import FakeBackend
 @click.group(name="obs-captions")
 def cli() -> None:
     """OBS live-caption CLI."""
+    from obs_captions.platform_dll import add_cuda_dll_directories
+
+    # Make pip-installed nvidia-* CUDA/cuDNN DLLs visible to CTranslate2 on
+    # Windows. No-op off Windows. Covers both the console-script and
+    # ``python -m obs_captions`` entry points (both run this group callback).
+    add_cuda_dll_directories()
 
 
 @cli.command("list-devices")

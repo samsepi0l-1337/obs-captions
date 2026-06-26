@@ -31,6 +31,8 @@ def create_backend(
 
         return LocalWhisperBackend(
             model_size=cfg.local.model_size,
+            device=cfg.local.device,
+            compute_type=cfg.local.compute_type,
             cpu_threads=cfg.local.cpu_threads,
             partial_interval_ms=cfg.local.partial_interval_ms,
             max_buffer_s=cfg.local.max_buffer_s,

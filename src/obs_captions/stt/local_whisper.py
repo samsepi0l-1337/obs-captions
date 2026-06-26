@@ -10,6 +10,7 @@ from typing import Any
 
 from obs_captions.audio.capture import PCM16_SAMPLE_RATE, pcm16_to_float32
 from obs_captions.stt.base import STTBackend, Transcript, local_agreement
+from obs_captions.stt.device import resolve_device
 
 TranscribeFn = Callable[[bytes], str | Awaitable[str]]
 
@@ -23,6 +24,8 @@ class LocalWhisperBackend(STTBackend):
         on_partial: Callable[[Transcript], None],
         on_final: Callable[[Transcript], None],
         model_size: str = "small",
+        device: str = "auto",
+        compute_type: str | None = None,
         cpu_threads: int = 1,
         partial_interval_ms: int = 500,
         max_buffer_s: float = 30.0,
@@ -35,6 +38,8 @@ class LocalWhisperBackend(STTBackend):
             on_final=on_final,
         )
         self.model_size = model_size
+        self.device = device
+        self.compute_type = compute_type
         self.cpu_threads = _bounded_cpu_threads(cpu_threads)
         self.partial_interval_ms = partial_interval_ms
         self.max_buffer_s = max_buffer_s
@@ -207,10 +212,11 @@ class LocalWhisperBackend(STTBackend):
     def _load_model(self) -> Any:
         from faster_whisper import WhisperModel
 
+        device, compute_type = resolve_device(self.device, self.compute_type)
         return WhisperModel(
             self.model_size,
-            device="cpu",
-            compute_type="int8",
+            device=device,
+            compute_type=compute_type,
             cpu_threads=self.cpu_threads,
         )
 

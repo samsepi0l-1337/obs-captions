@@ -20,6 +20,12 @@ dependencies = [
 
 [project.optional-dependencies]
 local = ["faster-whisper", "onnxruntime", "silero-vad"]
+# Windows/Linux NVIDIA CUDA runtime wheels for the local engine (device="cuda"/"auto").
+# Guarded so `uv sync` on macOS never tries to install them (no macOS wheels exist).
+gpu = [
+    "nvidia-cublas-cu12; platform_system != 'Darwin'",
+    "nvidia-cudnn-cu12; platform_system != 'Darwin'",
+]
 openai = ["openai"]
 elevenlabs = ["elevenlabs"]
 obs = ["simpleobsws>=1.2.0"]

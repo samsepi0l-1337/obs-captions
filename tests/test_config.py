@@ -5,7 +5,7 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from obs_captions.cli import cli
-from obs_captions.config import AppConfig, OverlayConfig, ProviderConfig, load_config
+from obs_captions.config import AppConfig, LocalConfig, OverlayConfig, ProviderConfig, load_config
 
 
 def test_load_config_uses_m0_defaults(monkeypatch):
@@ -160,3 +160,44 @@ def test_overlay_config_rejects_unknown_fields():
 def test_provider_config_rejects_unknown_fields():
     with pytest.raises(ValidationError):
         ProviderConfig(model_name="typo-field")
+
+
+def test_local_config_device_and_compute_type_defaults():
+    local = LocalConfig()
+    assert local.device == "auto"
+    assert local.compute_type is None
+
+
+def test_local_config_accepts_valid_device_and_compute_type():
+    local = LocalConfig(device="cuda", compute_type="float16")
+    assert local.device == "cuda"
+    assert local.compute_type == "float16"
+    assert LocalConfig(device="cpu").device == "cpu"
+
+
+def test_local_config_rejects_invalid_device():
+    with pytest.raises(ValidationError):
+        LocalConfig(device="gpu")
+
+
+def test_local_config_round_trips_from_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+engine = "local"
+
+[local]
+model_size = "large-v3"
+device = "cuda"
+compute_type = "float16"
+cpu_threads = 2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.local.model_size == "large-v3"
+    assert config.local.device == "cuda"
+    assert config.local.compute_type == "float16"
+    assert config.local.cpu_threads == 2

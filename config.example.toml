@@ -32,6 +32,11 @@ custom_css = ""
 
 [local]
 model_size = "small"
+device = "auto"           # auto | cpu | cuda. auto probes for an NVIDIA GPU and
+                          # falls back to CPU. Windows/Linux NVIDIA: install the
+                          # GPU runtime with `uv sync --extra local --extra gpu`.
+compute_type = ""         # "" = per-device default (cuda->float16, cpu->int8).
+                          # Override e.g. "int8_float16" (GPU) or "int8" (CPU).
 cpu_threads = 1
 partial_interval_ms = 500
 max_buffer_s = 30.0       # rolling re-transcribe window cap (s); bounds partial latency

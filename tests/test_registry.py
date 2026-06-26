@@ -30,6 +30,28 @@ async def test_local_engine_returns_local_whisper_backend(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_backend_defaults_device_auto_and_compute_type_none():
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine="local")
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, LocalWhisperBackend)
+    assert backend.device == "auto"
+    assert backend.compute_type is None
+
+
+@pytest.mark.asyncio
+async def test_local_backend_receives_device_and_compute_type_from_config():
+    from obs_captions.config import AppConfig, LocalConfig
+
+    cfg = AppConfig(engine="local", local=LocalConfig(device="cuda", compute_type="float16"))
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, LocalWhisperBackend)
+    assert backend.device == "cuda"
+    assert backend.compute_type == "float16"
+
+
+@pytest.mark.asyncio
 async def test_openrouter_engine_returns_openrouter_backend(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     from obs_captions.config import AppConfig
