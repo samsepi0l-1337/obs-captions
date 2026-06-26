@@ -105,11 +105,18 @@ def test_tokenize_text_prefers_words_and_supports_unspaced_korean():
 async def test_local_whisper_emits_full_partial_and_final_with_fake_transcriber():
     partials: list[Transcript] = []
     finals: list[Transcript] = []
-    hypotheses = iter(["안녕하세요 세게", "안녕하세요 세계"])
+    # Stable transcriber: each feed advances the hypothesis; re-transcribing an
+    # UNCHANGED buffer (e.g. flush's final pass) returns the same latest text, as a
+    # real model would. (A finite ``iter`` would raise StopIteration on flush's
+    # final re-transcription — its absence previously encoded the dropped-tail bug.)
+    hypotheses = ["안녕하세요 세게", "안녕하세요 세계"]
+    seen = {"i": 0}
 
     async def fake_transcribe(_pcm16: bytes) -> str:
         await asyncio.sleep(0)
-        return next(hypotheses)
+        i = min(seen["i"], len(hypotheses) - 1)
+        seen["i"] += 1
+        return hypotheses[i]
 
     backend = LocalWhisperBackend(
         on_partial=partials.append,
@@ -124,29 +131,37 @@ async def test_local_whisper_emits_full_partial_and_final_with_fake_transcriber(
     await backend.flush()
     await backend.stop_stream()
 
+    # No spurious empty partial: ``_emit_partial_from_buffer`` only emits a partial
+    # when the unconfirmed tail is non-empty, so flush's final pass on the
+    # fully-committed buffer emits nothing.
     assert [item.text for item in partials] == ["안녕하세요 세게", "세계"]
-    assert backend.confirmed_text == "안녕하세요"
     assert finals == [
         Transcript(text="안녕하세요", is_final=True, lang="ko"),
         Transcript(text="세계", is_final=True, lang="ko"),
     ]
+    # flush re-transcribes and commits the trailing token, so the confirmed text is
+    # the full utterance (was "안녕하세요" before flush gained its final pass).
+    assert backend.confirmed_text == "안녕하세요 세계"
 
 
 @pytest.mark.asyncio
 async def test_local_whisper_emits_local_agreement_finals_and_unconfirmed_tail_once():
     partials: list[Transcript] = []
     finals: list[Transcript] = []
-    hypotheses = iter(
-        [
-            "안녕하세요 자",
-            "안녕하세요 자막",
-            "안녕하세요 자막 테스트",
-        ]
-    )
+    # Stable transcriber (see note above): re-transcribing the unchanged final
+    # buffer returns the latest hypothesis instead of exhausting an iterator.
+    hypotheses = [
+        "안녕하세요 자",
+        "안녕하세요 자막",
+        "안녕하세요 자막 테스트",
+    ]
+    seen = {"i": 0}
 
     async def fake_transcribe(_pcm16: bytes) -> str:
         await asyncio.sleep(0)
-        return next(hypotheses)
+        i = min(seen["i"], len(hypotheses) - 1)
+        seen["i"] += 1
+        return hypotheses[i]
 
     backend = LocalWhisperBackend(
         on_partial=partials.append,
@@ -382,17 +397,20 @@ async def test_short_utterance_within_cap_behaves_unchanged():
     identical to the no-cap baseline (LocalAgreement-2 committing)."""
     partials: list[Transcript] = []
     finals: list[Transcript] = []
-    hypotheses = iter(
-        [
-            "안녕하세요 자",
-            "안녕하세요 자막",
-            "안녕하세요 자막 테스트",
-        ]
-    )
+    # Stable transcriber (see note above): flush's final re-transcription of the
+    # unchanged buffer returns the latest hypothesis, not StopIteration.
+    hypotheses = [
+        "안녕하세요 자",
+        "안녕하세요 자막",
+        "안녕하세요 자막 테스트",
+    ]
+    seen = {"i": 0}
 
     async def fake_transcribe(_pcm16: bytes) -> str:
         await asyncio.sleep(0)
-        return next(hypotheses)
+        i = min(seen["i"], len(hypotheses) - 1)
+        seen["i"] += 1
+        return hypotheses[i]
 
     backend = LocalWhisperBackend(
         on_partial=partials.append,
@@ -411,6 +429,294 @@ async def test_short_utterance_within_cap_behaves_unchanged():
 
     assert [item.text for item in partials] == ["안녕하세요 자", "자막", "테스트"]
     assert [item.text for item in finals] == ["안녕하세요", "자막", "테스트"]
+
+
+@pytest.mark.asyncio
+async def test_flush_retranscribes_trailing_audio_fed_after_last_partial():
+    """With partial_interval_ms > 0, audio fed AFTER the last 'due' partial but
+    BEFORE flush() must still reach the finalized caption.
+
+    Two back-to-back feeds: the first is 'due' (sets _latest_text to a prefix),
+    the second arrives <interval later so feed_audio does NOT re-emit. flush()
+    must re-transcribe the now-current buffer so the LATER words are finalized;
+    otherwise the utterance tail (up to partial_interval_ms of speech) is dropped.
+
+    The transcriber is window-aware: it returns a growing transcript keyed to how
+    much buffer was fed ("안녕" after 1 chunk, "안녕 하세요" once 2 chunks present).
+    """
+    finals: list[Transcript] = []
+    chunk_bytes = 3200  # 0.1s @ 16kHz PCM16
+
+    async def fake_transcribe(pcm16: bytes) -> str:
+        await asyncio.sleep(0)
+        chunks_in_window = len(pcm16) // chunk_bytes
+        return "안녕" if chunks_in_window <= 1 else "안녕 하세요"
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=finals.append,
+        transcribe_fn=fake_transcribe,
+        partial_interval_ms=500,  # production-like; >0 gates feed_audio re-emit
+        sample_rate=16000,
+        max_buffer_s=30,
+    )
+
+    await backend.start_stream()
+    chunk = b"\x00\x00" * 1600  # 3200 bytes == 0.1s
+    await backend.feed_audio(chunk)  # due (first feed) -> emits, _latest_text="안녕"
+    await backend.feed_audio(chunk)  # <500ms later -> NOT due -> no re-emit
+    await backend.flush()
+    await backend.stop_stream()
+
+    final_text = " ".join(t.text for t in finals)
+    # The trailing word ("하세요"), only present once the 2nd chunk is in the buffer,
+    # must reach the final caption. Pre-fix, flush finalizes the stale "안녕" prefix
+    # and drops it.
+    assert "하세요" in final_text, (
+        f"trailing audio dropped: flush finalized stale text; finals={[t.text for t in finals]}"
+    )
+    assert final_text == "안녕 하세요", (
+        f"final caption should be the full re-transcribed utterance; got {final_text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_flush_consumes_pending_rebase_from_trim_after_last_partial():
+    """When a buffer trim sets _rebase_pending=True AND trailing audio arrives
+    after the last 'due' partial, flush() must finalize from the REBASED current
+    window (consuming the rebase), not from stale pre-rebase state — recovering
+    the trailing word, with no committed token lost or duplicated.
+
+    Scenario (3-chunk cap, partial_interval_ms=500): feed w0..w4 each forced 'due'
+    (reset _last_partial_at) so LocalAgreement-2 commits w0,w1,w2 as the rolling
+    window slides; then feed a final trailing chunk (w5) that is NOT due — it only
+    buffers and trims, setting _rebase_pending without transcribing. flush() must
+    re-transcribe the trimmed window [w3,w4,w5], consume the rebase, and finalize
+    w5. Against the old flush (no final re-transcription) w5 is dropped and the
+    rebase is bypassed — i.e. this is RED before the fix.
+
+    The transcriber is window-aware (returns the most-recent chunk's worth of words
+    held in the rolling buffer), so trims physically drop the oldest words.
+    """
+    finals: list[Transcript] = []
+    chunk_bytes = 3200
+    words = ["w0", "w1", "w2", "w3", "w4", "w5"]
+    fed = {"n": 0}
+
+    async def fake_transcribe(pcm16: bytes) -> str:
+        await asyncio.sleep(0)
+        n_in_window = len(pcm16) // chunk_bytes
+        held = words[: fed["n"]][-n_in_window:] if n_in_window else []
+        return " ".join(held)
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=finals.append,
+        transcribe_fn=fake_transcribe,
+        partial_interval_ms=500,
+        sample_rate=16000,
+        max_buffer_s=0.3,  # cap = 9600 bytes -> 3 chunks; trims as the window slides
+    )
+
+    await backend.start_stream()
+    chunk = b"\x00\x00" * 1600  # 3200 bytes == 0.1s
+    # Feed w0..w4, each forced 'due' so every chunk is transcribed and the sliding
+    # 3-chunk window commits w0, w1, w2 via LocalAgreement-2 (with rebases on trim).
+    for _ in range(len(words) - 1):
+        fed["n"] += 1
+        backend._last_partial_at = 0.0  # force this feed to be 'due'
+        await backend.feed_audio(chunk)
+    # Final trailing chunk (w5) arrives <500ms after the last partial -> NOT due:
+    # it buffers + trims (sets _rebase_pending) but is never transcribed pre-flush.
+    fed["n"] += 1
+    await backend.feed_audio(chunk)
+    assert backend._rebase_pending, "scenario precondition: trim should flag a rebase"
+    await backend.flush()
+    await backend.stop_stream()
+
+    emitted = [tok for t in finals for tok in t.text.split()]
+    # No committed token duplicated across the rebase/flush.
+    assert len(emitted) == len(set(emitted)), f"duplicate finals: {emitted}"
+    # The trailing word, only present in the post-trim window, must be finalized
+    # (old flush finalizes from stale state and drops it).
+    assert "w5" in emitted, f"trailing word in rebased window dropped: {emitted}"
+    # No committed token lost: every word that passed through the window is
+    # finalized exactly once.
+    assert set(emitted) == set(words), f"committed token lost/spurious: {emitted}"
+
+
+@pytest.mark.asyncio
+async def test_flush_empty_retranscription_with_pending_rebase_keeps_committed_tokens():
+    """INVARIANT (B): when flush()'s final re-transcription returns EMPTY while a
+    buffer trim left ``_rebase_pending=True``, committed/surviving tokens must NOT
+    be silently dropped.
+
+    ``_emit_partial_from_buffer`` early-returns on empty text BEFORE consuming the
+    pending rebase, so the force-commit of uncommitted-but-scrolled-off tokens in
+    ``_rebase_after_trim`` is skipped — violating LocalAgreement-2's "no committed
+    token lost" invariant. This is the RED case.
+
+    Scenario (2-chunk cap, partial_interval_ms=500, window-aware transcriber):
+    feed w0..w3 each forced 'due' so the sliding 2-chunk window commits the early
+    words via LocalAgreement-2 (rebasing on each trim); then feed a final trailing
+    chunk (w4) NOT due so it only buffers + trims (sets ``_rebase_pending``) without
+    transcribing. The flush re-transcription is forced to return "" (e.g. a final
+    silent/garbage window the model rejects). The words that scrolled through the
+    window before flush must still each be finalized exactly once.
+    """
+    finals: list[Transcript] = []
+    chunk_bytes = 3200
+    words = ["w0", "w1", "w2", "w3", "w4"]
+    fed = {"n": 0}
+    flush_pass = {"empty": False}
+
+    async def fake_transcribe(pcm16: bytes) -> str:
+        await asyncio.sleep(0)
+        if flush_pass["empty"]:
+            return ""  # final flush window: model yields nothing
+        n_in_window = len(pcm16) // chunk_bytes
+        held = words[: fed["n"]][-n_in_window:] if n_in_window else []
+        return " ".join(held)
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=finals.append,
+        transcribe_fn=fake_transcribe,
+        partial_interval_ms=500,
+        sample_rate=16000,
+        max_buffer_s=0.2,  # cap = 6400 bytes -> 2 chunks; trims as the window slides
+    )
+
+    await backend.start_stream()
+    chunk = b"\x00\x00" * 1600  # 3200 bytes == 0.1s
+    for _ in range(len(words) - 1):  # feed w0..w3, each forced 'due'
+        fed["n"] += 1
+        backend._last_partial_at = 0.0
+        await backend.feed_audio(chunk)
+    # Final trailing chunk (w4): NOT due -> buffers + trims, flags rebase, no transcribe.
+    fed["n"] += 1
+    await backend.feed_audio(chunk)
+    assert backend._rebase_pending, "scenario precondition: trim should flag a rebase"
+    flush_pass["empty"] = True  # the flush re-transcription returns empty
+    await backend.flush()
+    await backend.stop_stream()
+
+    emitted = [tok for t in finals for tok in t.text.split()]
+    # No committed token duplicated across the rebase/flush.
+    assert len(emitted) == len(set(emitted)), f"duplicate finals: {emitted}"
+    # No committed token lost: every word that fully scrolled through the 2-chunk
+    # window before flush must have been force-committed. With a 2-chunk window and
+    # 5 words, w0..w2 are guaranteed to have scrolled off (committed) before flush.
+    for expected in ["w0", "w1", "w2"]:
+        assert expected in emitted, f"committed {expected} dropped on empty flush: {emitted}"
+
+
+@pytest.mark.asyncio
+async def test_flush_empty_retranscription_does_not_emit_stale_final():
+    """CASE (A): after a real partial sets ``_latest_text``, if flush()'s final
+    re-transcription returns EMPTY, ``flush()`` must not emit a SPURIOUS final from
+    the now-stale ``_latest_text``.
+
+    Semantics chosen: an empty final window means the rolling buffer holds no
+    recognizable speech *at finalize time* — the previously-emitted partial was a
+    transient hypothesis the model has since retracted, so nothing residual should
+    be force-finalized. Tokens that were genuinely confirmed earlier (via
+    LocalAgreement-2 / rebase force-commit) were already emitted as finals at that
+    time; the only thing the stale path adds is the UNCONFIRMED tail, which an
+    empty re-transcription has explicitly withdrawn.
+
+    Here a single short utterance fits within the cap (no trim, no rebase). One
+    forced-due feed sets ``_latest_text="hello world"`` with nothing yet confirmed
+    (first frame -> LocalAgreement-2 commits nothing). The flush re-transcription
+    returns "" -> flush must emit NO final (pre-fix it finalizes the stale
+    "hello world").
+    """
+    finals: list[Transcript] = []
+    calls = {"n": 0}
+
+    async def fake_transcribe(_pcm16: bytes) -> str:
+        await asyncio.sleep(0)
+        calls["n"] += 1
+        # First (the single due partial) yields a hypothesis; the flush pass is empty.
+        return "hello world" if calls["n"] == 1 else ""
+
+    backend = LocalWhisperBackend(
+        on_partial=lambda _: None,
+        on_final=finals.append,
+        transcribe_fn=fake_transcribe,
+        partial_interval_ms=0,
+        sample_rate=16000,
+        max_buffer_s=30,  # fits the single chunk; no trim/rebase
+    )
+
+    await backend.start_stream()
+    await backend.feed_audio(b"\x00\x00" * 1600)  # due -> _latest_text="hello world", confirmed=0
+    await backend.flush()
+    await backend.stop_stream()
+
+    # Nothing was ever confirmed; an empty final window retracts the unconfirmed
+    # hypothesis, so no final should be emitted at all.
+    assert finals == [], f"spurious stale final emitted on empty flush: {[t.text for t in finals]}"
+
+
+@pytest.mark.asyncio
+async def test_rebase_after_trim_does_not_emit_empty_partial_when_all_committed():
+    """When a post-trim REBASE leaves every surviving token committed (the rebased
+    tail is empty), ``_rebase_after_trim`` must NOT emit a spurious empty
+    ``on_partial("")`` — mirroring the empty-tail guard already on the normal
+    ``_emit_partial_from_buffer`` path. Both partial-emission sites must be uniform.
+
+    Scenario (2-chunk cap, partial_interval_ms=500, scripted transcriber):
+      feed1 (due): "a b"  -> first hypothesis, nothing agreed yet
+      feed2 (due): "a b"  -> LocalAgreement-2 commits "a","b" (confirmed_len=2)
+      feed3 (NOT due): the trailing chunk only buffers + trims (sets
+                       ``_rebase_pending``), it is not transcribed pre-flush.
+      flush -> re-transcribes the trimmed window as "b": the sole surviving token
+               is already committed, so the rebase confirms it and the tail is "".
+               Pre-fix, the rebase path emits a spurious on_partial("") here.
+
+    RED before the 1-line ``if tail:`` guard on the rebase emission.
+    """
+    partials: list[Transcript] = []
+    finals: list[Transcript] = []
+    scripts = {1: "a b", 2: "a b", 3: "b"}
+    fed = {"n": 0}
+
+    async def fake_transcribe(_pcm16: bytes) -> str:
+        await asyncio.sleep(0)
+        return scripts[fed["n"]]
+
+    backend = LocalWhisperBackend(
+        on_partial=partials.append,
+        on_final=finals.append,
+        transcribe_fn=fake_transcribe,
+        partial_interval_ms=500,
+        sample_rate=16000,
+        max_buffer_s=0.2,  # cap = 6400 bytes -> 2 chunks; trims on the 3rd feed
+    )
+
+    await backend.start_stream()
+    chunk = b"\x00\x00" * 1600  # 3200 bytes == 0.1s
+    # feed1, feed2: forced 'due' so each is transcribed and LocalAgreement-2 commits.
+    for _ in range(2):
+        fed["n"] += 1
+        backend._last_partial_at = 0.0  # force this feed to be 'due'
+        await backend.feed_audio(chunk)
+    # feed3: trailing chunk arrives <interval later -> NOT due; it buffers + trims
+    # (flags the rebase) but is not transcribed until flush.
+    fed["n"] += 1
+    await backend.feed_audio(chunk)
+    assert backend._rebase_pending, "scenario precondition: trim should flag a rebase"
+    await backend.flush()
+    await backend.stop_stream()
+
+    # The committed tokens still finalize exactly once.
+    assert [t.text for t in finals] == ["a", "b"]
+    # The rebase whose surviving token is already committed (empty tail) must emit
+    # NO partial at all — no spurious empty on_partial("").
+    partial_texts = [p.text for p in partials]
+    assert "" not in partial_texts, f"spurious empty partial from rebase: {partial_texts}"
+    assert all(p.text for p in partials), f"empty partial emitted: {partial_texts}"
 
 
 @pytest.mark.slow

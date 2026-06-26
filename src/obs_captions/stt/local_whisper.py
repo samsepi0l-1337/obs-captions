@@ -84,8 +84,13 @@ class LocalWhisperBackend(STTBackend):
         if not self._buffer:
             self._reset_segment()
             return
-        if not self._latest_text:
-            await self._emit_partial_from_buffer()
+        # Re-transcribe the CURRENT buffer before finalizing. Audio fed after the
+        # last 'due' partial (and any pending rebase from a trim) is only reflected
+        # here; finalizing from stale ``_latest_text`` would drop the utterance
+        # tail. This advances ``_last_confirmed_len`` for any newly-agreed tokens
+        # (emitting their on_final), so the residual computed below never
+        # double-emits them.
+        await self._emit_partial_from_buffer()
         tokens = tokenize_text(self._latest_text)
         text = detokenize_text(tokens[self._last_confirmed_len :], source_text=self._latest_text)
         if text:
@@ -118,6 +123,7 @@ class LocalWhisperBackend(STTBackend):
         text = (await self._transcribe(bytes(self._buffer))).strip()
         self._last_partial_at = time.monotonic()
         if not text:
+            self._handle_empty_window()
             return
         current_tokens = tokenize_text(text)
         if self._rebase_pending:
@@ -136,7 +142,46 @@ class LocalWhisperBackend(STTBackend):
         self._previous_tokens = current_tokens
         self._latest_text = text
         tail = detokenize_text(current_tokens[self._last_confirmed_len :], source_text=text)
-        self.on_partial(Transcript(text=tail, is_final=False, lang=self.language))
+        if tail:
+            self.on_partial(Transcript(text=tail, is_final=False, lang=self.language))
+
+    def _handle_empty_window(self) -> None:
+        """Resolve a re-transcription that came back EMPTY (no recognizable speech).
+
+        Two distinct cases, distinguished by ``_rebase_pending`` (set when a trim
+        dropped the oldest audio since the last emission):
+
+        - rebase pending: the trim scrolled the oldest tokens off the window, and
+          this final window has no speech left to anchor them. Any prev token not
+          yet committed lost its audio for good, so force-commit it now (last
+          chance) — same "no committed/surviving token lost" invariant the normal
+          ``_rebase_after_trim`` upholds. (With an empty window the retained
+          overlap is necessarily zero, so every uncommitted prev token is a
+          scrolled-off survivor.)
+        - no rebase: the unconfirmed tail is still fully in-window and the model
+          now rejects it as non-speech (e.g. end-of-utterance trailing silence).
+          Withdraw it — emit no final. Tokens genuinely confirmed earlier were
+          already finalized via LocalAgreement-2 and are untouched here.
+
+        Either way the window now holds nothing, so reset the hypothesis state to
+        empty. ``flush`` finalizes ``_latest_text[_last_confirmed_len:]``; clearing
+        it to "" keeps an empty re-transcription from resurrecting a STALE,
+        already-retracted tail as a spurious final.
+        """
+        if self._rebase_pending:
+            for token in self._previous_tokens[self._last_confirmed_len :]:
+                self.on_final(
+                    Transcript(
+                        text=detokenize_text([token], source_text=self._latest_text),
+                        is_final=True,
+                        lang=self.language,
+                    )
+                )
+        self._rebase_pending = False
+        self._previous_tokens = []
+        self._last_confirmed_len = 0
+        self._latest_text = ""
+        self.confirmed_text = ""
 
     def _rebase_after_trim(self, current_tokens: list[str], text: str) -> None:
         """Rebase LocalAgreement-2 state onto the trimmed rolling window.
@@ -199,7 +244,8 @@ class LocalWhisperBackend(STTBackend):
             # longer maps to this window. Clear it so it matches the rebased state.
             self.confirmed_text = ""
         tail = detokenize_text(current_tokens[new_confirmed_len:], source_text=text)
-        self.on_partial(Transcript(text=tail, is_final=False, lang=self.language))
+        if tail:
+            self.on_partial(Transcript(text=tail, is_final=False, lang=self.language))
 
     async def _transcribe(self, pcm16: bytes) -> str:
         if self._transcribe_fn is None:
