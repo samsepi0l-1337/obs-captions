@@ -28,6 +28,7 @@ gpu = [
 ]
 openai = ["openai"]
 elevenlabs = ["elevenlabs"]
+google = ["google-cloud-speech"]
 obs = ["simpleobsws>=1.2.0"]
 bench = ["psutil>=5.9"]
 

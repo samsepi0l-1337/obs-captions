@@ -16,6 +16,10 @@ class ProviderConfig(BaseModel):
 
     model: str | None = None
     mode: str | None = None  # google: "gemini" | "speech_v2"
+    # google speech_v2: regional endpoint + GCP project (chirp requires a region,
+    # "global" is invalid). project_id falls back to env GOOGLE_CLOUD_PROJECT.
+    location: str | None = None
+    project_id: str | None = None
 
 
 class AudioConfig(BaseModel):

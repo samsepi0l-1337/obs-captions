@@ -19,7 +19,7 @@
 - 오디오: **sounddevice** (PyAudio 금지). 16kHz mono float32 콜백.
 - VAD: **Silero VAD (ONNX 경로)** (webrtcvad 금지).
 - 플랫폼: **Windows 10/11**(NVIDIA CUDA 로컬 STT 가속, 1급) + **macOS Apple Silicon**(CPU) 공동 1급, Linux 동작.
-- STT(pluggable): `local` faster-whisper — `[local].device`(auto|cpu|cuda)·`compute_type`로 제어. Windows/Linux는 **CUDA**(auto→탐지/float16, 미탐지 시 CPU 폴백), macOS는 CPU int8. `device` 분기는 순수 함수 `stt/device.py:resolve_device`(CUDA 미탐지=빈 set→CPU) / `openai` Realtime(`gpt-realtime-whisper`) / `elevenlabs` Scribe v2 Realtime. 내부 정규화 16kHz PCM16(OpenAI 어댑터만 24kHz 업샘플).
+- STT(pluggable): `local` faster-whisper — `[local].device`(auto|cpu|cuda)·`compute_type`로 제어. Windows/Linux는 **CUDA**(auto→탐지/float16, 미탐지 시 CPU 폴백), macOS는 CPU int8. `device` 분기는 순수 함수 `stt/device.py:resolve_device`(CUDA 미탐지=빈 set→CPU) / `openai` Realtime(`gpt-realtime-whisper`) / `elevenlabs` Scribe v2 Realtime / `google` mode `gemini`(Gemini Live, API 키) 또는 `speech_v2`(Speech-to-Text v2 `chirp_2` gRPC 스트리밍, 서비스계정·`--extra google`, asyncio.Queue 브리지·270s 선제 재시작·client 주입). 내부 정규화 16kHz PCM16(OpenAI 어댑터만 24kHz 업샘플).
 - 서버: FastAPI + uvicorn + websockets. HTTP 정적 오버레이 + `/ws`.
 - 오버레이: 정적 HTML/CSS/JS. 투명 배경, committed/partial 2-tier, diff push.
 - OBS 플러그인: C++ + obs-plugintemplate + **Qt6 QWebSocket**. 내장 `text_ft2_source`(.version=2) 소유·갱신(approach b, 직접 래스터화 금지).

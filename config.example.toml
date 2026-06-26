@@ -66,6 +66,12 @@ model = "grok-transcribe"
 [providers.google]            # mode "gemini": .env GEMINI_API_KEY | mode "speech_v2": service account
 mode = "gemini"
 model = "gemini-3.1-flash-live-preview"
+# speech_v2 mode (Speech-to-Text v2 streaming, chirp_2). Needs `uv sync --extra google`
+# and a service account via .env GOOGLE_APPLICATION_CREDENTIALS (+ GOOGLE_CLOUD_PROJECT).
+# mode       = "speech_v2"
+# model      = "chirp_2"        # chirp requires a regional endpoint ("global" invalid)
+# location   = "us-central1"    # endpoint region; must host the chosen model
+# project_id = "my-gcp-project" # or set env GOOGLE_CLOUD_PROJECT
 
 # Path B — obs-websocket v5 → native Text source (run with: --sink obs or --sink both)
 # Password goes in .env as OBS_WS_PASSWORD (never in this file).

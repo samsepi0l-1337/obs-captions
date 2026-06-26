@@ -96,7 +96,7 @@ def create_backend(
         return XaiBackend(**kwargs, **common)
 
     if engine == "google":
-        from obs_captions.stt.google import GoogleBackend
+        from obs_captions.stt.google import build_google_backend
 
         provider_cfg = cfg.providers.get("google")
         mode = provider_cfg.mode if provider_cfg and provider_cfg.mode else "gemini"
@@ -108,8 +108,26 @@ def create_backend(
                     "GEMINI_API_KEY must be set in .env to use the google engine (gemini mode)."
                 )
             kwargs["api_key"] = api_key
+        elif mode == "speech_v2":
+            project_id = (
+                (provider_cfg.project_id if provider_cfg else None)
+                or os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or ""
+            )
+            if not project_id:
+                raise ValueError(
+                    "GOOGLE_CLOUD_PROJECT must be set in .env (or providers.google.project_id) "
+                    "to use the google engine (speech_v2 mode)."
+                )
+            kwargs["project_id"] = project_id
+            # Pass an explicit location through verbatim -- including "" -- so the
+            # ctor's regional-endpoint guard owns the rejection. Only a None/unset
+            # location falls back to the backend's us-central1 default; a
+            # truthiness check here would silently mask "" and bypass the guard.
+            if provider_cfg and provider_cfg.location is not None:
+                kwargs["location"] = provider_cfg.location
         if provider_cfg and provider_cfg.model:
             kwargs["model"] = provider_cfg.model
-        return GoogleBackend(**kwargs, **common)
+        return build_google_backend(**kwargs, **common)
 
     raise ValueError(f"Unknown engine: '{engine}'")
