@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from obs_captions.obs_display import _build_display_text
+
 if TYPE_CHECKING:
     from obs_captions.config import AppConfig
     from obs_captions.pipeline import CaptionState
@@ -268,7 +270,7 @@ class ObsTextSink:
         existing = {inp["inputName"] for inp in resp.responseData.get("inputs", [])}
         if self._obs.source_name not in existing:
             logger.info("Creating OBS text source: %s", self._obs.source_name)
-            await self._client.call(
+            create_resp = await self._client.call(
                 _make_production_request(
                     "CreateInput",
                     {
@@ -280,6 +282,11 @@ class ObsTextSink:
                     },
                 )
             )
+            if not create_resp.ok():
+                logger.warning(
+                    "CreateInput returned non-ok status: %s; source may not appear in OBS",
+                    create_resp.requestStatus,
+                )
 
     def _on_state_change(self, snapshot: Any) -> None:
         """Called by CaptionState. Schedule debounced push (loop-safe)."""
@@ -345,9 +352,9 @@ class ObsTextSink:
         """Push one SetInputSettings. Returns True on success, False on failure."""
         if self._client is None:
             return False
-        text = _build_display_text(snapshot)
+        text = _build_display_text(snapshot, max_chars=self._config.overlay.max_chars_per_line)
         try:
-            await self._client.call(
+            resp = await self._client.call(
                 _make_production_request(
                     "SetInputSettings",
                     {
@@ -356,6 +363,11 @@ class ObsTextSink:
                     },
                 )
             )
+            if not resp.ok():
+                logger.warning(
+                    "SetInputSettings returned non-ok status: %s", resp.requestStatus
+                )
+                return False
             return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("SetInputSettings failed: %s", exc)
@@ -368,11 +380,7 @@ class ObsTextSink:
 
 
 async def _cancel_and_await(task: asyncio.Task[None] | None) -> None:
-    """Cancel ``task`` and await it, swallowing cancellation/faults.
-
-    A faulted send is already surfaced by its done-callback; a cancelled task must
-    not propagate CancelledError out of stop().
-    """
+    """Cancel task; swallow CancelledError/faults (faults already logged by done-cb)."""
     if task is None or task.done():
         return
     task.cancel()
@@ -382,11 +390,3 @@ async def _cancel_and_await(task: asyncio.Task[None] | None) -> None:
         pass
     except Exception:  # noqa: BLE001
         pass
-
-
-def _build_display_text(snapshot: Any) -> str:
-    """Join committed lines + partial tail into display string."""
-    parts = list(snapshot.committed)
-    if snapshot.partial:
-        parts.append(snapshot.partial)
-    return "\n".join(parts)

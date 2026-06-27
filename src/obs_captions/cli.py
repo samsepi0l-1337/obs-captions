@@ -78,7 +78,7 @@ async def _serve(config_path: str | None, demo: bool) -> None:
     config = load_config(config_path)
     hub = Hub()
     state = CaptionState()
-    wire_caption_state(state, hub, loop=asyncio.get_running_loop())
+    wire_caption_state(state, hub, loop=asyncio.get_running_loop(), max_chars_per_line=config.overlay.max_chars_per_line)
     app = create_app(hub, overlay_dir=_overlay_dir(), config=config)
 
     # Finding 4/7 fix: use ExitStack so export_sink.stop() is guaranteed even if
@@ -176,22 +176,36 @@ def _setup_export_sink(cfg: Any) -> Any | None:
 def _build_caption_callbacks(cfg: Any, state: Any, export_sink: Any | None = None) -> tuple[Any, Any]:
     """Return (on_partial, on_final) callables that apply text transforms then notify *state*.
 
-    When *export_sink* is provided, each final transcript is also forwarded to it
-    after the transform.  Both callbacks use dataclasses.replace to produce a new
-    frozen Transcript rather than mutating the original.
+    Feature 4 (suppression): after the transform, should_suppress() is called.
+    Blank/blocklisted text is silently dropped — state and export_sink are NOT
+    called for suppressed transcripts.
+
+    When *export_sink* is provided, each non-suppressed final is also forwarded
+    to it after the transform.  Both callbacks use dataclasses.replace to produce
+    a new frozen Transcript rather than mutating the original.
     """
     from dataclasses import replace as dc_replace
 
-    from obs_captions.text import transform_text
+    from obs_captions.text import should_suppress, transform_text
 
     def _t(tr: Any) -> Any:
         return dc_replace(tr, text=transform_text(tr.text, cfg.text))
 
     def on_partial(tr: Any) -> None:
-        state.on_partial(_t(tr))
+        t = _t(tr)
+        if not t.text.strip() and cfg.text.suppress_blank:
+            # Blank partial: clear the stale partial display rather than silently
+            # dropping (which would leave the previous non-blank partial visible).
+            state.on_partial(dc_replace(t, text=""))
+            return
+        if should_suppress(t.text, cfg.text):
+            return
+        state.on_partial(t)
 
     def on_final(tr: Any) -> None:
         t = _t(tr)
+        if should_suppress(t.text, cfg.text):
+            return
         state.on_final(t)
         if export_sink is not None:
             export_sink.on_final(t)
@@ -216,7 +230,7 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
 
     if use_browser:
         hub = Hub()
-        wire_caption_state(state, hub, loop=asyncio.get_running_loop())
+        wire_caption_state(state, hub, loop=asyncio.get_running_loop(), max_chars_per_line=config.overlay.max_chars_per_line)
         app = create_app(hub, overlay_dir=_overlay_dir(), config=config)
         uv_server = uvicorn.Server(
             uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")

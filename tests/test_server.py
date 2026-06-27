@@ -412,6 +412,52 @@ def test_create_app_default_overlay_dir_mounts_overlay_and_serves_html(monkeypat
     assert '<div class="caption-box">' in response.text
 
 
+def test_log_task_exception_returns_silently_for_cancelled_task():
+    """Line 76: _log_task_exception returns early and logs nothing for cancelled tasks."""
+    import contextlib
+    from obs_captions.server.app import _log_task_exception
+
+    async def noop() -> None:
+        await asyncio.sleep(10)
+
+    loop = asyncio.new_event_loop()
+    try:
+        task = loop.create_task(noop())
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            loop.run_until_complete(task)
+        # Must not raise and must not attempt task.exception() (which would raise).
+        _log_task_exception(task)
+    finally:
+        loop.close()
+
+
+def test_custom_css_route_404_when_configured_but_file_missing():
+    """Line 117: custom.css returns 404 when path is configured but the file doesn't exist."""
+    app = create_app(
+        Hub(),
+        overlay_dir=None,
+        config=AppConfig(overlay=OverlayConfig(custom_css="/nonexistent/path/custom.css")),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/custom.css")
+
+    assert response.status_code == 404
+
+
+def test_create_app_with_overlay_config_directly():
+    """Line 133: _overlay_config passes OverlayConfig through unchanged."""
+    overlay_cfg = OverlayConfig(font_size=60)
+    app = create_app(Hub(), overlay_dir=None, config=overlay_cfg)
+
+    with TestClient(app) as client:
+        response = client.get("/overlay-style.css")
+
+    assert response.status_code == 200
+    assert "--cap-font-size: 60px;" in response.text
+
+
 def test_create_app_overlay_dir_none_skips_mount_but_ws_works():
     """create_app(overlay_dir=None) must skip the static mount entirely.
 

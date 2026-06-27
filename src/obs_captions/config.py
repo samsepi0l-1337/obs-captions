@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from obs_captions.text import ReplacementRule as ReplacementRule  # re-export
 
@@ -80,6 +81,13 @@ class OverlayConfig(BaseModel):
     fade_ms: int = Field(default=200, ge=0)
     uppercase: bool = False
     custom_css: str | None = None
+    # Feature 5: per-line character wrap (0 = disabled).
+    # Wrapping uses codepoint count (len()), which is correct for Korean Hangul
+    # (each syllable-block is one codepoint) without requiring extra dependencies.
+    # Interaction with max_lines: max_lines caps committed-transcript history;
+    # wrapping operates at display time and may produce more display lines than
+    # max_lines — this is intentional (wrapping is display-only).
+    max_chars_per_line: int = 0
 
 
 class ObsConfig(BaseModel):
@@ -95,7 +103,7 @@ class ObsConfig(BaseModel):
 
 
 class TextConfig(BaseModel):
-    """Live-caption text transformation: replacements and word filter."""
+    """Live-caption text transformation: replacements, word filter, and suppression."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -104,15 +112,36 @@ class TextConfig(BaseModel):
     filter_mode: Literal["mask", "remove"] = "mask"
     filter_mask: str = "***"
 
-    @model_validator(mode="after")
-    def _strip_blank_filter_words(self) -> "TextConfig":
-        """Strip blank/whitespace-only strings from filter_words at config-load.
+    # Feature 4: Hallucination suppression.
+    # suppress_blank=True (default ON) drops any final/partial whose text is blank
+    # or whitespace-only after transform — blank finals are never wanted.
+    # suppress_regex: each pattern is matched against the full stripped text
+    # (re.fullmatch, case-insensitive); invalid patterns raise ValueError at load.
+    # suppress_exact: case-insensitive whole-string comparison after strip.
+    suppress_blank: bool = True
+    suppress_regex: list[str] = Field(default_factory=list)
+    suppress_exact: list[str] = Field(default_factory=list)
 
-        An empty string in filter_words would build the pattern r'\\b\\b' which
-        matches at every word boundary, silently corrupting all captions.
-        Finding 2 fix: reject them here (fail-fast at config-load).
-        """
+    # Compiled regex patterns (not serialised; rebuilt in the validator below).
+    _compiled_suppress_regex: list[re.Pattern[str]] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="after")
+    def _post_validate(self) -> "TextConfig":
+        """Strip blank filter_words; compile and validate suppress_regex patterns."""
+        # Strip blank/whitespace-only strings from filter_words at config-load.
+        # An empty string would build r'\b\b' matching every word boundary.
         self.filter_words = [w for w in self.filter_words if w.strip()]
+
+        # Compile suppress_regex patterns eagerly so invalid patterns fail fast.
+        compiled: list[re.Pattern[str]] = []
+        for i, pat in enumerate(self.suppress_regex):
+            try:
+                compiled.append(re.compile(pat, re.IGNORECASE))
+            except re.error as exc:
+                raise ValueError(
+                    f"Invalid suppress_regex[{i}] {pat!r}: {exc}"
+                ) from exc
+        self._compiled_suppress_regex = compiled
         return self
 
 

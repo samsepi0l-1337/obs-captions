@@ -159,3 +159,52 @@ def transform_text(text: str, text_cfg: TextConfig) -> str:
     text = apply_replacements(text, text_cfg.replacements)
     text = apply_filter(text, text_cfg.filter_words, text_cfg.filter_mode, text_cfg.filter_mask)
     return text
+
+
+def should_suppress(text: str, cfg: TextConfig) -> bool:
+    """Return True if *text* should be dropped rather than forwarded to caption state.
+
+    Suppression rules (applied in order; first match wins):
+    1. suppress_blank=True (default): blank or whitespace-only text → drop.
+    2. suppress_regex: re.fullmatch (case-insensitive) against stripped text → drop.
+    3. suppress_exact: case-insensitive whole-string comparison after strip → drop.
+
+    A non-blank, non-matching caption is NEVER suppressed regardless of config.
+    """
+    stripped = text.strip()
+    if cfg.suppress_blank and not stripped:
+        return True
+    for pattern in cfg._compiled_suppress_regex:
+        if pattern.fullmatch(stripped):
+            return True
+    folded = stripped.casefold()
+    for exact in cfg.suppress_exact:
+        if folded == exact.strip().casefold():
+            return True
+    return False
+
+
+def wrap_text(text: str, max_chars: int) -> list[str]:
+    """Split *text* into lines of at most *max_chars* codepoints.
+
+    Uses codepoint count (``len()``), which is correct for Korean Hangul
+    (each syllable-block is a single codepoint) without requiring extra
+    grapheme-segmentation dependencies.
+
+    ``max_chars <= 0`` disables wrapping and returns ``[text]`` unchanged.
+
+    .. note::
+        This function assumes well-formed Unicode input (no explicit lone
+        surrogates).  STT backends produce valid UTF-8, so lone surrogates
+        are impossible in practice.  Splitting a string that happens to
+        contain them at a chunk boundary would yield two invalid surrogate
+        strings — an accepted trade-off given the real-world impossibility.
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
+        return [text]
+    lines: list[str] = []
+    while len(text) > max_chars:
+        lines.append(text[:max_chars])
+        text = text[max_chars:]
+    lines.append(text)
+    return lines

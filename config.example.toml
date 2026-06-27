@@ -33,6 +33,12 @@ letter_spacing = 0
 fade_ms = 200
 uppercase = false
 custom_css = ""
+# max_chars_per_line = 0  # Feature 5: 0 = disabled (default).  Set to e.g. 30
+#                         # to hard-wrap each caption line at 30 codepoints.
+#                         # Uses codepoint count (correct for Korean Hangul —
+#                         # each syllable-block is one codepoint).
+#                         # Wrapping is display-only; max_lines still caps the
+#                         # committed-history count, not the wrapped line count.
 
 [local]
 model_size = "small"
@@ -93,6 +99,25 @@ source_name = "LiveCaptions"
 # filter_words = ["badword", "slur"]   # whole-word, case-insensitive
 # filter_mode  = "mask"                # "mask" (replace with mask str) | "remove" (drop + normalise spaces)
 # filter_mask  = "***"                 # replacement string used when filter_mode = "mask"
+
+# ── Feature 4: Hallucination suppression ─────────────────────────────────────
+# Whisper hallucinates stock phrases on near-silence.  These options drop finals
+# (and blank partials) before they reach the caption overlay.
+#
+# suppress_blank = true  (default: true — blank/whitespace-only finals are always
+#                         dropped; this is safe to leave on)
+# suppress_regex = []    # list of regex patterns (re.fullmatch, case-insensitive)
+#                        # — text matching ANY pattern is dropped.
+#                        # Invalid patterns raise an error at config load (fail-fast).
+# suppress_exact = []    # case-insensitive whole-string match after strip.
+#
+# suppress_blank = true
+# suppress_regex = [
+#   "thank you for watching",   # exact-but-regex example
+#   "please subscribe.*",        # wildcard suffix
+#   "\\[.*\\]",                  # whisper's [Music], [Applause], etc.
+# ]
+# suppress_exact = ["thank you for watching", "please like and subscribe"]
 
 # Each [[text.replacements]] block is one substitution rule.
 # Fields: match (required), replace (required), regex (bool=false),

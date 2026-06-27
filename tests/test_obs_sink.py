@@ -867,3 +867,380 @@ def test_production_request_falls_back_to_request_dataclass_without_simpleobsws(
     assert isinstance(result, _Request)
     assert result.requestType == "GetInputList"
     assert result.requestData == {"inputKind": "text_ft2_source_v2"}
+
+
+# ---------------------------------------------------------------------------
+# _build_production_client tests (lines 52-56)
+# ---------------------------------------------------------------------------
+
+
+def test_build_production_client_calls_websocket_client_when_simpleobsws_available():
+    """Lines 52-56: _build_production_client delegates to simpleobsws.WebSocketClient."""
+    from obs_captions.obs_sink import _build_production_client
+
+    fake_ws_cls = MagicMock()
+    fake_module = MagicMock()
+    fake_module.WebSocketClient = fake_ws_cls
+
+    with patch.dict("sys.modules", {"simpleobsws": fake_module}):
+        result = _build_production_client("ws://localhost:4455", "s3cr3t")
+
+    fake_ws_cls.assert_called_once_with(url="ws://localhost:4455", password="s3cr3t")
+    assert result is fake_ws_cls.return_value
+
+
+def test_build_production_client_raises_runtime_error_without_simpleobsws():
+    """Lines 52-55: _build_production_client raises RuntimeError when simpleobsws missing."""
+    from obs_captions.obs_sink import _build_production_client
+
+    with patch.dict("sys.modules", {"simpleobsws": None}):
+        with pytest.raises(RuntimeError, match="simpleobsws not installed"):
+            _build_production_client("ws://localhost:4455", "")
+
+
+# ---------------------------------------------------------------------------
+# Non-injected client path (line 133)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_uses_build_production_client_when_no_client_injected():
+    """Line 133: start() calls _build_production_client when no client is injected."""
+    fake_client = FakeWsClient(inputs=[])
+
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config)
+    state = CaptionState(max_lines=3)
+    sink = ObsTextSink(state=state, config=app_config)  # no client injected
+
+    with patch("obs_captions.obs_sink._build_production_client", return_value=fake_client):
+        await sink.start()
+
+    assert sink._connected is True
+    await sink.stop()
+
+
+# ---------------------------------------------------------------------------
+# _run_reconnect defensive paths (lines 210, 213-214)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_reconnect_handles_connect_retry_raising():
+    """Line 210: _run_reconnect's outer except catches if _connect_with_retry raises."""
+    client = FakeWsClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    # Setting client to None causes _connect_with_retry's assert to raise AssertionError,
+    # which propagates to _run_reconnect's outer except (line 210).
+    sink._client = None
+
+    # Must not raise; AssertionError is caught and treated as reconnect failure.
+    await sink._run_reconnect()
+    assert sink._connected is False
+
+    # Restore for clean stop
+    sink._client = client
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_run_reconnect_aborts_if_stopped_before_completes():
+    """Lines 213-214: _run_reconnect sets connected=False and returns if _stopped is set."""
+    client = FakeWsClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    # Override _connect_with_retry to set _stopped=True midway (simulates stop() racing).
+    async def stopped_retry() -> Exception | None:
+        sink._stopped = True
+        return None  # "successful" connect but stopped flag is now True
+
+    original_retry = sink._connect_with_retry
+    sink._connect_with_retry = stopped_retry  # type: ignore[method-assign]
+
+    await sink._run_reconnect()
+
+    # Despite connect "succeeding", _stopped=True prevents marking connected.
+    assert sink._connected is False
+
+    # Restore for clean stop
+    sink._connect_with_retry = original_retry  # type: ignore[method-assign]
+    sink._stopped = False
+    sink._client = client
+    await sink.stop()
+
+
+# ---------------------------------------------------------------------------
+# _ensure_source_exists after reconnect raises (lines 230-231)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_reconnect_logs_and_continues_when_ensure_source_raises(caplog):
+    """Lines 230-231: _ensure_source_exists raising after reconnect is logged and swallowed."""
+    import logging
+
+    call_count = {"n": 0}
+
+    class RaisingEnsureClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "GetInputList":
+                call_count["n"] += 1
+                if call_count["n"] > 1:  # fail only during the post-reconnect call
+                    raise RuntimeError("transient GetInputList failure")
+            return await super().call(request)
+
+    client = RaisingEnsureClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    with caplog.at_level(logging.WARNING):
+        await sink._run_reconnect()
+
+    assert any("re-ensure source after reconnect failed" in r.getMessage() for r in caplog.records)
+    await sink.stop()
+
+
+# ---------------------------------------------------------------------------
+# stop() disconnect exception (lines 253-254)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stop_swallows_disconnect_exception():
+    """Lines 253-254: stop() swallows exceptions raised by client.disconnect()."""
+
+    class DisconnectRaisesClient(FakeWsClient):
+        async def disconnect(self) -> None:
+            raise RuntimeError("disconnect blew up")
+
+    client = DisconnectRaisesClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+    await sink.stop()  # must not raise
+    assert sink._stopped is True
+
+
+# ---------------------------------------------------------------------------
+# _ensure_source_exists: GetInputList not ok (lines 265-266)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_source_skips_create_when_get_input_list_not_ok():
+    """Lines 265-266: when GetInputList returns not-ok, CreateInput is skipped."""
+
+    class NotOkGetInputListClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "GetInputList":
+                self.calls.append(request)
+                return FakeResponse(_ok=False, responseData={})
+            return await super().call(request)
+
+    client = NotOkGetInputListClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+    await sink.stop()
+
+    types = [c.requestType for c in client.calls]
+    assert "GetInputList" in types
+    assert "CreateInput" not in types
+
+
+# ---------------------------------------------------------------------------
+# _on_state_change early return (line 287)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_state_change_is_no_op_before_start():
+    """Line 287: _on_state_change returns early when loop is None (before start)."""
+    client = FakeWsClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    # Don't call start() — _loop stays None
+    snap = CaptionSnapshot(committed=[], partial="test")
+    sink._on_state_change(snap)  # must not raise or schedule anything
+    assert sink._pending_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_on_state_change_is_no_op_after_stop():
+    """Line 287: _on_state_change returns early when _stopped is True (after stop)."""
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+    await sink.stop()
+
+    before = sink._pending_snapshot
+    snap = CaptionSnapshot(committed=["x"], partial="")
+    sink._on_state_change(snap)  # stopped=True → must not update pending_snapshot
+    assert sink._pending_snapshot is before
+
+
+# ---------------------------------------------------------------------------
+# _debounce_send CancelledError (lines 326-327)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_debounce_send_catches_cancelled_error():
+    """Lines 326-327: _debounce_send catches CancelledError and returns silently.
+
+    Cancels AFTER the coroutine has started and is suspended at asyncio.sleep so
+    that CancelledError is thrown at the sleep's await (not before the try block).
+    """
+    client = FakeWsClient(inputs=[])
+    sink = _make_sink(client, debounce_ms=0)
+    sink._debounce_s = 5.0  # long enough that only a cancel can stop it
+
+    task = asyncio.ensure_future(sink._debounce_send())
+    await asyncio.sleep(0)  # one tick: task starts, reaches sleep and suspends
+
+    task.cancel()  # now cancel while task is suspended at asyncio.sleep(5.0)
+    for _ in range(4):
+        await asyncio.sleep(0)  # deliver CancelledError into the coroutine
+
+    assert task.done()
+    assert not task.cancelled()  # task completed normally (CancelledError was caught)
+
+
+# ---------------------------------------------------------------------------
+# _try_set_text with None client (line 347)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_try_set_text_returns_false_when_client_is_none():
+    """Line 347: _try_set_text returns False immediately when _client is None."""
+    # Create sink without injecting a client so _client stays None.
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config)
+    state = CaptionState(max_lines=3)
+    sink = ObsTextSink(state=state, config=app_config)  # no client kwarg → _client is None
+    result = await sink._try_set_text(CaptionSnapshot(committed=[], partial="x"))
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _cancel_and_await non-CancelledError (lines 383-384)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_and_await_swallows_non_cancelled_exception():
+    """Lines 383-384: _cancel_and_await swallows exceptions other than CancelledError."""
+    from obs_captions.obs_sink import _cancel_and_await
+
+    async def converts_cancel_to_runtime() -> None:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise RuntimeError("task converted cancel to RuntimeError")
+
+    task = asyncio.ensure_future(converts_cancel_to_runtime())
+    await asyncio.sleep(0)  # let task reach its await
+    await _cancel_and_await(task)  # must swallow RuntimeError without raising
+    assert task.done()
+
+
+# ---------------------------------------------------------------------------
+# Path B integration: max_chars_per_line wires through to SetInputSettings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_max_chars_per_line_wraps_text_in_set_input_settings():
+    """Path B integration: ObsTextSink respects max_chars_per_line when building display text."""
+    from obs_captions.config import OverlayConfig
+
+    client = FakeWsClient(inputs=["LiveCaptions"])
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config, overlay=OverlayConfig(max_chars_per_line=5))
+    state = CaptionState(max_lines=3)
+    sink = ObsTextSink(
+        state=state,
+        config=app_config,
+        client=client,
+        debounce_ms=0,
+    )
+    sink._password = ""
+
+    await sink.start()
+    snapshot = CaptionSnapshot(committed=["1234567890"], partial="")
+    await sink._send_snapshot(snapshot)
+    await sink.stop()
+
+    set_calls = [c for c in client.calls if c.requestType == "SetInputSettings"]
+    assert len(set_calls) >= 1
+    text = set_calls[-1].requestData["inputSettings"]["text"]
+    assert "\n" in text, f"Expected wrapped text with newline, got: {text!r}"
+    assert text == "12345\n67890"
+
+
+# ---------------------------------------------------------------------------
+# Medium finding: resp.ok() checks on SetInputSettings / CreateInput
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_try_set_text_returns_false_when_resp_not_ok(caplog):
+    """SetInputSettings returning non-ok (without raising) must yield False + log warning."""
+    import logging
+
+    class NonOkSetInputClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "SetInputSettings":
+                self.calls.append(request)
+                return FakeResponse(_ok=False, responseData={})
+            return await super().call(request)
+
+    client = NonOkSetInputClient(inputs=["LiveCaptions"])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._password = ""
+    await sink.start()
+
+    with caplog.at_level(logging.WARNING):
+        result = await sink._try_set_text(CaptionSnapshot(committed=["hello"], partial=""))
+
+    assert result is False
+    assert any(
+        "SetInputSettings returned non-ok" in r.getMessage() for r in caplog.records
+    )
+    await sink.stop()
+
+
+@pytest.mark.asyncio
+async def test_ensure_source_logs_warning_when_create_input_not_ok(caplog):
+    """CreateInput returning non-ok (without raising) must log a warning."""
+    import logging
+
+    class NonOkCreateInputClient(FakeWsClient):
+        async def call(self, request: FakeRequest) -> FakeResponse:
+            if request.requestType == "CreateInput":
+                self.calls.append(request)
+                return FakeResponse(_ok=False, responseData={})
+            return await super().call(request)
+
+    # Source absent so CreateInput is called.
+    client = NonOkCreateInputClient(inputs=[])
+    sink = _make_sink(client, source_name="LiveCaptions", debounce_ms=0)
+    sink._password = ""
+
+    with caplog.at_level(logging.WARNING):
+        await sink.start()
+
+    await sink.stop()
+
+    create_calls = [c for c in client.calls if c.requestType == "CreateInput"]
+    assert len(create_calls) == 1, "CreateInput must still be attempted"
+    assert any(
+        "CreateInput returned non-ok" in r.getMessage() for r in caplog.records
+    )

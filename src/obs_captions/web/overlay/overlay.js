@@ -9,12 +9,6 @@
   let lastCommitted = "";
   let lastPartial = "";
 
-  function maxLines() {
-    const raw = getComputedStyle(document.documentElement).getPropertyValue("--cap-max-lines");
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 3;
-  }
-
   function websocketUrl() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${protocol}//${window.location.host}/ws`;
@@ -41,7 +35,10 @@
   }
 
   function renderCommitted(lines) {
-    const visible = lines.slice(-maxLines());
+    // CaptionState already caps committed history to max_lines logical entries.
+    // Wrapping may produce more display lines per logical entry (display-only);
+    // we render all of them so no logical line is dropped by an overlay-side slice.
+    const visible = lines;
     const nextCommitted = visible.join("\n");
     if (nextCommitted === lastCommitted) return;
 

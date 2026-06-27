@@ -13,6 +13,7 @@ from obs_captions.packaging import resolve_overlay_dir
 from obs_captions.pipeline import CaptionSnapshot, CaptionState
 from obs_captions.server.hub import Hub
 from obs_captions.server.overlay_style import overlay_css_variables
+from obs_captions.text import wrap_text
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,26 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 
-def caption_state_to_message(snapshot: CaptionSnapshot) -> dict[str, Any]:
+def caption_state_to_message(snapshot: CaptionSnapshot, max_chars: int = 0) -> dict[str, Any]:
+    """Convert *snapshot* to the WebSocket caption message dict.
+
+    Feature 5: when *max_chars* > 0, committed lines are wrapped (each original
+    line may expand to multiple entries in the output list) and the partial string
+    is joined with newlines.  Wrapping uses codepoint count — correct for Korean
+    Hangul (each syllable-block is one codepoint).
+    """
+    if max_chars > 0:
+        committed: list[str] = []
+        for line in snapshot.committed:
+            committed.extend(wrap_text(line, max_chars))
+        partial = "\n".join(wrap_text(snapshot.partial, max_chars)) if snapshot.partial else ""
+    else:
+        committed = list(snapshot.committed)
+        partial = snapshot.partial
     return {
         "type": "caption",
-        "partial": snapshot.partial,
-        "committed": list(snapshot.committed),
+        "partial": partial,
+        "committed": committed,
     }
 
 
@@ -35,12 +51,13 @@ def wire_caption_state(
     hub: Hub,
     *,
     loop: asyncio.AbstractEventLoop | None = None,
+    max_chars_per_line: int = 0,
 ) -> None:
     target_loop = loop or asyncio.get_running_loop()
     tasks: set[asyncio.Task[None]] = set()
 
     def on_change(snapshot: CaptionSnapshot) -> None:
-        message = caption_state_to_message(snapshot)
+        message = caption_state_to_message(snapshot, max_chars=max_chars_per_line)
 
         def schedule() -> None:
             task = asyncio.create_task(hub.broadcast(message))

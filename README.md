@@ -383,6 +383,42 @@ format  = "srt"            # "txt" | "srt" | "vtt"
 
 타임스탬프는 STT 백엔드가 `start_ms`/`end_ms`를 제공하면 그 값을 사용하고, 없으면 세션 시작부터의 경과 시간으로 대체합니다.
 
+### 기능 4 — 환각 억제 (Hallucination Suppression)
+
+Whisper는 무음 구간에서 "thank you for watching"처럼 존재하지 않는 문구를 출력하는 경우가 있습니다. 이 기능은 해당 자막을 캡션 상태로 전달하기 전에 차단합니다.
+
+```toml
+[text]
+suppress_blank = true          # (기본 ON) 공백/빈 자막 자동 차단 — 항상 켜두는 것이 안전
+suppress_regex = [             # re.fullmatch, 대소문자 무시. 잘못된 정규식은 로드 시 오류
+  "\\[.*\\]",                  # [Music], [Applause] 등 Whisper 태그
+  "thank you.*",
+]
+suppress_exact = [             # 대소문자 무시, 앞뒤 공백 제거 후 전체 일치
+  "please like and subscribe",
+]
+```
+
+키 | 기본값 | 설명
+---|--------|-----
+`suppress_blank` | `true` | `true`: 빈 자막(공백 포함) 차단
+`suppress_regex` | `[]` | 정규식 패턴 목록 (전체 일치, 대소문자 무시). 잘못된 패턴 → 로드 시 ValueError
+`suppress_exact` | `[]` | 정확한 문자열 목록 (대소문자 무시, strip 후 비교)
+
+### 기능 5 — 줄당 글자 수 제한 (Per-Line Character Wrap)
+
+자막 한 줄이 너무 길 경우 강제로 줄 바꿈합니다. 한국어 한글 음절(1코드포인트)에도 정확하게 동작합니다.
+
+```toml
+[overlay]
+max_chars_per_line = 30   # 0 = 비활성 (기본)
+```
+
+- `max_chars_per_line = 0` (기본): 줄 바꿈 없음 — 기존 동작 유지
+- 양수 값: 각 자막 줄을 해당 코드포인트 수로 강제 분할
+- `max_lines`와의 관계: `max_lines`는 확정 자막 **기록** 수를 제한하고, `max_chars_per_line`은 **표시** 단계에서만 동작합니다. 한 줄이 3개 표시 줄로 나뉘어도 `max_lines` 카운트에는 1로 기록됩니다.
+- Path A(Browser Source WS)·Path B(OBS Text 소스) 양쪽 모두 동일한 순수 함수(`wrap_text`)로 처리됩니다.
+
 ---
 
 ## 라이선스 / 기여
