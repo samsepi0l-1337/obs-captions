@@ -145,6 +145,59 @@ async def test_capture_to_backend_non_speech_frame_not_fed():
 
 
 # ---------------------------------------------------------------------------
+# _capture_to_backend: paused controller gating
+# ---------------------------------------------------------------------------
+
+
+class _PausedController:
+    paused = True
+
+
+class _UnpausedController:
+    paused = False
+
+
+@pytest.mark.asyncio
+async def test_capture_to_backend_drops_frames_while_paused():
+    """When controller.paused=True, audio frames are dropped and backend.feed_audio is not called."""
+    capture = SingleFrameCapture(b"speech")
+    segmenter = SegmentSegmenter()
+    backend = RecordingBackend()
+
+    await _capture_to_backend(capture, segmenter, backend, _PausedController())
+
+    assert backend.started is True
+    assert backend.fed == []        # paused → no frames fed
+    assert backend.flush_calls == 0  # segmenter.process() not called → no flush either
+
+
+@pytest.mark.asyncio
+async def test_capture_to_backend_processes_frames_when_not_paused():
+    """When controller.paused=False, processing is identical to the no-controller path."""
+    capture = SingleFrameCapture(b"speech")
+    segmenter = SegmentSegmenter()
+    backend = RecordingBackend()
+
+    await _capture_to_backend(capture, segmenter, backend, _UnpausedController())
+
+    assert backend.fed == [b"speech"]
+    assert backend.flush_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_capture_to_backend_no_controller_unchanged_behaviour():
+    """controller=None (default) is identical to the original behaviour."""
+    capture = SingleFrameCapture(b"speech")
+    segmenter = SegmentSegmenter()
+    backend = RecordingBackend()
+
+    await _capture_to_backend(capture, segmenter, backend)  # no controller
+
+    assert backend.fed == [b"speech"]
+    assert backend.flush_calls == 1
+
+
+# ---------------------------------------------------------------------------
 # check-engine tests
 # ---------------------------------------------------------------------------
 
@@ -1030,6 +1083,70 @@ async def test_serve_wiring_no_demo(tmp_path, monkeypatch):
     # Export file was opened, written (WEBVTT header for vtt; empty for srt), and closed.
     assert export_path.exists()
     export_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_hotkey_disabled_does_not_create_listener(tmp_path, monkeypatch):
+    """Acceptance criteria 4: with hotkey.enabled=False (default) ObsHotkeyListener
+    is never constructed and behavior is identical to the pre-hotkey baseline."""
+    from obs_captions.cli import _run
+    from obs_captions.config import AppConfig
+    import obs_captions.obs_hotkey as hotkey_mod
+
+    cfg = AppConfig()  # obs.hotkey.enabled=False by default
+    _patch_run_deps(monkeypatch, tmp_path, cfg)
+
+    constructed: list[object] = []
+
+    class _TrackingListener:
+        def __init__(self, **kwargs: object) -> None:
+            constructed.append(kwargs)
+
+        async def start(self) -> None: ...
+        async def stop(self) -> None: ...
+
+    monkeypatch.setattr(hotkey_mod, "ObsHotkeyListener", _TrackingListener)
+
+    await _run(None, "browser")
+
+    assert constructed == [], "ObsHotkeyListener must NOT be instantiated when hotkey.enabled=False"
+
+
+@pytest.mark.asyncio
+async def test_run_hotkey_enabled_creates_listener_starts_and_stops(tmp_path, monkeypatch):
+    """Acceptance criteria 3: with hotkey.enabled=True ObsHotkeyListener is
+    constructed with a CaptionController, start() is awaited before the audio loop,
+    and stop() is awaited in the finally block."""
+    from obs_captions.cli import _run
+    from obs_captions.config import AppConfig, ObsConfig, ObsHotkeyConfig
+    import obs_captions.obs_hotkey as hotkey_mod
+
+    hotkey_cfg = ObsHotkeyConfig(enabled=True)
+    obs_cfg = ObsConfig().model_copy(update={"hotkey": hotkey_cfg})
+    cfg = AppConfig(obs=obs_cfg)
+    _patch_run_deps(monkeypatch, tmp_path, cfg)
+
+    started: list[object] = []
+    stopped: list[object] = []
+    captured_controller: list[object] = []
+
+    class _FakeListener:
+        def __init__(self, *, config: object, controller: object, **_: object) -> None:
+            captured_controller.append(controller)
+
+        async def start(self) -> None:
+            started.append(True)
+
+        async def stop(self) -> None:
+            stopped.append(True)
+
+    monkeypatch.setattr(hotkey_mod, "ObsHotkeyListener", _FakeListener)
+
+    await _run(None, "browser")
+
+    assert started == [True], "ObsHotkeyListener.start() must be awaited before the audio loop"
+    assert stopped == [True], "ObsHotkeyListener.stop() must be awaited in finally"
+    assert len(captured_controller) == 1, "ObsHotkeyListener must be constructed with a controller"
 
 
 @pytest.mark.asyncio

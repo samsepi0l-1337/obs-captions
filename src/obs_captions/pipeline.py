@@ -57,6 +57,10 @@ class CaptionState:
             committed.append(transcript.text)
         self._mutate(committed=committed[-self.max_lines :] if self.max_lines else [], partial="")
 
+    def clear(self) -> None:
+        """Clear all committed lines and partial text, notifying subscribers."""
+        self._mutate(committed=[], partial="")
+
     def _mutate(self, *, committed: list[str] | None = None, partial: str | None = None) -> None:
         before = self.snapshot()
         if committed is not None:

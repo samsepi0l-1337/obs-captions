@@ -91,6 +91,17 @@ port = 4455
 source_name = "LiveCaptions"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 핫키: OBS 핫키로 자막 일시정지/재개/초기화 (기본값 OFF)
+# obs-websocket v5는 핫키→클라이언트 이벤트가 없으므로 센티넬 오디오 입력 소스를
+# 사용합니다. OBS에서 "오디오 입력 캡처"를 2개 추가하고 핫키를 바인딩하세요.
+# OBS 측 설정은 README의 "핫키(OBS)" 섹션을 참조하세요.
+# ──────────────────────────────────────────────────────────────────────────────
+[obs.hotkey]
+enabled     = false            # true로 변경하면 활성화
+pause_input = "_CaptionPause"  # OBS 오디오 입력 소스 이름 (일시정지/재개 토글)
+clear_input = "_CaptionClear"  # OBS 오디오 입력 소스 이름 (자막 초기화)
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Feature: Text replacement / custom dictionary  (default-off — omit to skip)
 # Corrects brand names, terms, or common STT errors before the caption reaches
 # the overlay.  Rules are applied in order; replacements run before the filter.

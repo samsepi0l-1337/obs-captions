@@ -228,6 +228,50 @@ OBS_WS_PASSWORD=your_obs_websocket_password
 
 ---
 
+## 핫키(OBS) — 자막 일시정지 / 재개 / 초기화
+
+obs-websocket v5는 OBS→클라이언트 방향의 핫키 이벤트를 지원하지 않습니다.
+대신 **센티넬 오디오 입력 소스**(Audio Input Capture)의 음소거 상태 변경
+(`InputMuteStateChanged`) 이벤트를 핫키 캐리어로 활용합니다.
+소스는 장면에 배치할 필요 없이 오디오 믹서에만 존재하면 됩니다.
+
+### config.toml 설정
+
+```toml
+[obs.hotkey]
+enabled     = true             # 기본값 false → true로 변경
+pause_input = "_CaptionPause"  # 일시정지/재개 센티넬 소스 이름
+clear_input = "_CaptionClear"  # 자막 초기화 센티넬 소스 이름
+```
+
+### OBS 측 설정 (순서대로)
+
+1. **센티넬 소스 추가**: OBS Sources 패널 `+` → **Audio Input Capture** 2개 추가
+   - 이름: `_CaptionPause` / `_CaptionClear` (config.toml과 일치)
+   - 장치: Default (어떤 장치든 무관 — 장면에 배치하지 않아도 됩니다)
+2. **두 소스 모두 기본 음소거 상태**로 둡니다 (Audio Mixer에서 mute 아이콘 클릭).
+3. **OBS Settings → Hotkeys** 에서 핫키를 바인딩합니다:
+   - 일시정지/재개 토글 (같은 키에 두 동작 모두 할당):
+     - **Mute `_CaptionPause`** → 원하는 키 (예: `F9`)
+     - **Unmute `_CaptionPause`** → 같은 키 (`F9`)
+   - 자막 초기화 (Mute만 할당, Unmute 없음 — 앱이 자동 재무장):
+     - **Mute `_CaptionClear`** → 원하는 키 (예: `F10`)
+
+> **동작 원리**: `_CaptionPause` 음소거 → 자막 일시정지 / 음소거 해제 → 재개.
+> `_CaptionClear` 음소거 → 현재 자막 초기화 후 앱이 즉시 Unmute(재무장).
+> 두 소스 모두 실제 오디오 출력은 하지 않습니다.
+
+### 동작 확인
+
+```bash
+# config.toml [obs.hotkey] enabled = true 후 실행
+uv run python -m obs_captions run --sink obs
+# F9 누르면 자막 일시정지, 다시 F9 → 재개
+# F10 누르면 자막 초기화
+```
+
+---
+
 ## CLI
 
 | 명령 | 설명 |

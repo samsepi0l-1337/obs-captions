@@ -261,7 +261,18 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
             frame_ms=100,
             min_silence_ms=min_silence_ms,
         )
-        audio_task = asyncio.create_task(_capture_to_backend(capture, segmenter, backend))
+
+        # Hotkey listener (default-off; enabled by [obs.hotkey] enabled=true).
+        controller = None
+        hotkey_listener = None
+        if config.obs.hotkey.enabled:
+            from obs_captions.obs_hotkey import CaptionController, ObsHotkeyListener
+
+            controller = CaptionController(state)
+            hotkey_listener = ObsHotkeyListener(config=config, controller=controller)
+            await hotkey_listener.start()
+
+        audio_task = asyncio.create_task(_capture_to_backend(capture, segmenter, backend, controller))
 
         try:
             if use_browser:
@@ -277,16 +288,20 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
                 await audio_task
             await capture.stop()
             await backend.stop_stream()
+            if hotkey_listener is not None:
+                await hotkey_listener.stop()
             if obs_sink is not None:  # pragma: no cover
                 await obs_sink.stop()
             # export_sink.stop() is handled by ExitStack when the with-block exits
 
 
-async def _capture_to_backend(capture, segmenter, backend) -> None:
+async def _capture_to_backend(capture, segmenter, backend, controller=None) -> None:
     await backend.start_stream()
     capture.start()
     try:
         async for pcm16 in capture.frames():
+            if controller is not None and controller.paused:
+                continue  # drop audio frame while paused; keep loop alive
             event = segmenter.process(pcm16)
             if event.is_speech:
                 await backend.feed_audio(pcm16)

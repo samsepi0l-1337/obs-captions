@@ -90,12 +90,23 @@ class OverlayConfig(BaseModel):
     max_chars_per_line: int = 0
 
 
+class ObsHotkeyConfig(BaseModel):
+    """Configuration for the OBS hotkey listener (default-off)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    pause_input: str = "_CaptionPause"
+    clear_input: str = "_CaptionClear"
+
+
 class ObsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     host: str = "localhost"
     port: int = 4455
     source_name: str = "LiveCaptions"
+    hotkey: ObsHotkeyConfig = Field(default_factory=ObsHotkeyConfig)
 
     @property
     def obs_ws_password(self) -> str | None:
