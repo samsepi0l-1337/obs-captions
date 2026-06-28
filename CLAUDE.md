@@ -60,3 +60,49 @@
 
 - 코드 변경으로 계약이 바뀌면 관련 영역 문서와 문서 경로 맵을 함께 갱신한다.
 - 도메인 폴더가 생기면 각 폴더에 `CLAUDE.md`와 `AGENTS.md`를 두고 즉시 따라야 하는 실패 지식·필수 운영 계약을 기록한다.
+- 기능 추가·변경 시 `DOCS.md`의 해당 섹션을 함께 갱신한다.
+
+| 문서 | 경로 | 목적 |
+|------|------|------|
+| 프로젝트 계약 | `CLAUDE.md` | AI 에이전트 운영 규칙, 코딩 계약 |
+| 에이전트 계약 | `AGENTS.md` | 런타임·라이브러리·테스트 경계 |
+| 기능·사용법 | `DOCS.md` | 구현된 기능 전체, 설정 레퍼런스, CLI 사용법 |
+| 성능 비교 | `COMPARISON.md` | Path A vs B 벤치마크 |
+| 사용자 가이드 | `README.md` | 설치·빠른 시작·배포 |
+
+## Feature Map (현재 구현 상태)
+
+상세 설명은 `DOCS.md` 참조. 아래는 연동 계약 요약.
+
+### STT 백엔드 (12종)
+- **로컬**: `local` — faster-whisper, LocalAgreement-2, CUDA/CPU auto
+- **실시간 스트리밍**: `openai`, `elevenlabs`, `google`(gemini/speech_v2), `xai`, `assemblyai`, `deepgram`, `azure` — `StreamingBackend` ABC, WebSocket 재연결·지수백오프
+- **배치(발화 단위)**: `openrouter`, `replicate`, `groq` — `UtteranceBackend` ABC, VAD flush 후 HTTP POST
+
+### 오디오 경로
+- `mic` — sounddevice (크로스플랫폼)
+- `loopback` — PyAudioWPatch WASAPI (Windows 전용, `--extra loopback`)
+
+### 자막 경로
+- **Path A** (브라우저 소스): FastAPI + WebSocket → `overlay.html` CSS 변수 주입, p50=0.14ms
+- **Path B** (obs-websocket): `ObsTextSink` → SetInputSettings, p50=135ms (디바운스 120ms 포함)
+
+### 텍스트 처리 파이프라인 (text.py → pipeline.py)
+| Feature | 모듈 | 설정 섹션 |
+|---------|------|----------|
+| 1. 텍스트 치환 | `apply_replacements()` | `[[text.replacements]]` |
+| 2. 단어 필터 | `apply_filter()` | `[text] filter_words` |
+| 3. Export (SRT/VTT/TXT) | `TranscriptExportSink` | `[export]` |
+| 4. 환각 억제 | `should_suppress()` | `[text] suppress_*` |
+| 5. 줄바꿈 | `wrap_text()` | `[overlay] max_chars_per_line` |
+
+### OBS 핫키 (obs_hotkey.py)
+- `_CaptionPause` 센티넬 Input mute → pause/resume
+- `_CaptionClear` 센티넬 Input mute → clear (자동 unmute)
+- `InputMuteStateChanged` 이벤트 구독, 별도 obs-ws 클라이언트
+
+### 주요 계약 위반 패턴 (과거 버그)
+- `simpleobsws` 이벤트는 dataclass가 아닌 **dict** — `event.data["inputName"]` 형태로 접근
+- `flush()` 는 반드시 buffer 재전사 — 마지막 발화 tail 누락 방지
+- `git add -A` 금지 — 삭제된 파일까지 staged됨, 명시적 add 필수
+- verifier가 `git checkout` 으로 uncommitted 작업 삭제 금지 — brief에 명시 필수
