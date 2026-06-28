@@ -95,13 +95,32 @@ async def test_turn_complete_emits_final_with_accumulated_text():
         await backend.stop_stream()
 
 
-def test_speech_v2_mode_raises_not_implemented():
-    with pytest.raises(NotImplementedError, match="speech_v2"):
-        GoogleBackend(
-            mode="speech_v2",
-            on_partial=lambda t: None,
-            on_final=lambda t: None,
-        )
+def test_speech_v2_mode_returns_speech_v2_backend():
+    from obs_captions.stt.google import build_google_backend
+    from obs_captions.stt.google_speech_v2 import SpeechV2Backend
+    from tests._fake_speech_v2 import FakeCloudSpeechTypes, FakeSpeechAsyncClient
+
+    backend = build_google_backend(
+        mode="speech_v2",
+        project_id="test-project",
+        client=FakeSpeechAsyncClient(),
+        types=FakeCloudSpeechTypes,
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    assert isinstance(backend, SpeechV2Backend)
+
+
+def test_gemini_mode_still_returns_google_backend():
+    from obs_captions.stt.google import build_google_backend
+
+    backend = build_google_backend(
+        mode="gemini",
+        api_key=_FAKE_KEY,
+        on_partial=lambda t: None,
+        on_final=lambda t: None,
+    )
+    assert isinstance(backend, GoogleBackend)
 
 
 def test_unknown_mode_raises():

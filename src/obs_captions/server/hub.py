@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from starlette.websockets import WebSocket
@@ -31,15 +32,14 @@ class Hub:
             return
 
         self._last_message = next_message
-        stale_clients: list[WebSocket] = []
-        for client in list(self._clients):
-            try:
-                await client.send_json(self.last_snapshot)
-            except RuntimeError:
-                stale_clients.append(client)
-
-        for client in stale_clients:
-            self._clients.discard(client)
+        clients = list(self._clients)
+        results = await asyncio.gather(
+            *(client.send_json(self.last_snapshot) for client in clients),
+            return_exceptions=True,
+        )
+        for client, result in zip(clients, results):
+            if isinstance(result, BaseException):
+                self._clients.discard(client)
 
 
 def _copy_message(message: dict[str, Any]) -> dict[str, Any]:

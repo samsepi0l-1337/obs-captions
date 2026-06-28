@@ -2,8 +2,12 @@ engine = "local"          # local | openrouter | replicate | openai | elevenlabs
 language = "ko"
 
 [audio]
-device = ""
-samplerate = 16000
+source = "mic"            # mic | loopback. loopback = Windows 데스크톱/시스템 사운드(WASAPI)
+                          # 캡처 → 게임·미디어 소리도 자막. Windows 전용(`uv sync --extra loopback`),
+                          # macOS/Linux는 가상 루프백 장치 필요(범위 외) → mic 사용.
+device = ""              # 빈값=기본 장치. loopback은 빈값=기본 루프백 장치
+                          # (이름/인덱스는 `list-loopback-devices`로 확인)
+samplerate = 16000        # loopback은 장치 네이티브 레이트(예: 48k stereo)로 캡처 후 16k mono로 리샘플
 channels = 1
 
 [server]
@@ -29,11 +33,23 @@ letter_spacing = 0
 fade_ms = 200
 uppercase = false
 custom_css = ""
+# max_chars_per_line = 0  # Feature 5: 0 = disabled (default).  Set to e.g. 30
+#                         # to hard-wrap each caption line at 30 codepoints.
+#                         # Uses codepoint count (correct for Korean Hangul —
+#                         # each syllable-block is one codepoint).
+#                         # Wrapping is display-only; max_lines still caps the
+#                         # committed-history count, not the wrapped line count.
 
 [local]
 model_size = "small"
+device = "auto"           # auto | cpu | cuda. auto probes for an NVIDIA GPU and
+                          # falls back to CPU. Windows/Linux NVIDIA: install the
+                          # GPU runtime with `uv sync --extra local --extra gpu`.
+compute_type = ""         # "" = per-device default (cuda->float16, cpu->int8).
+                          # Override e.g. "int8_float16" (GPU) or "int8" (CPU).
 cpu_threads = 1
 partial_interval_ms = 500
+max_buffer_s = 30.0       # rolling re-transcribe window cap (s); bounds partial latency
 vad_threshold = 0.5
 min_silence_ms = 500
 
@@ -60,6 +76,12 @@ model = "grok-transcribe"
 [providers.google]            # mode "gemini": .env GEMINI_API_KEY | mode "speech_v2": service account
 mode = "gemini"
 model = "gemini-3.1-flash-live-preview"
+# speech_v2 mode (Speech-to-Text v2 streaming, chirp_2). Needs `uv sync --extra google`
+# and a service account via .env GOOGLE_APPLICATION_CREDENTIALS (+ GOOGLE_CLOUD_PROJECT).
+# mode       = "speech_v2"
+# model      = "chirp_2"        # chirp requires a regional endpoint ("global" invalid)
+# location   = "us-central1"    # endpoint region; must host the chosen model
+# project_id = "my-gcp-project" # or set env GOOGLE_CLOUD_PROJECT
 
 # Path B — obs-websocket v5 → native Text source (run with: --sink obs or --sink both)
 # Password goes in .env as OBS_WS_PASSWORD (never in this file).
@@ -67,3 +89,77 @@ model = "gemini-3.1-flash-live-preview"
 host = "localhost"
 port = 4455
 source_name = "LiveCaptions"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 핫키: OBS 핫키로 자막 일시정지/재개/초기화 (기본값 OFF)
+# obs-websocket v5는 핫키→클라이언트 이벤트가 없으므로 센티넬 오디오 입력 소스를
+# 사용합니다. OBS에서 "오디오 입력 캡처"를 2개 추가하고 핫키를 바인딩하세요.
+# OBS 측 설정은 README의 "핫키(OBS)" 섹션을 참조하세요.
+# ──────────────────────────────────────────────────────────────────────────────
+[obs.hotkey]
+enabled     = false            # true로 변경하면 활성화
+pause_input = "_CaptionPause"  # OBS 오디오 입력 소스 이름 (일시정지/재개 토글)
+clear_input = "_CaptionClear"  # OBS 오디오 입력 소스 이름 (자막 초기화)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature: Text replacement / custom dictionary  (default-off — omit to skip)
+# Corrects brand names, terms, or common STT errors before the caption reaches
+# the overlay.  Rules are applied in order; replacements run before the filter.
+# ──────────────────────────────────────────────────────────────────────────────
+[text]
+# filter_words = ["badword", "slur"]   # whole-word, case-insensitive
+# filter_mode  = "mask"                # "mask" (replace with mask str) | "remove" (drop + normalise spaces)
+# filter_mask  = "***"                 # replacement string used when filter_mode = "mask"
+
+# ── Feature 4: Hallucination suppression ─────────────────────────────────────
+# Whisper hallucinates stock phrases on near-silence.  These options drop finals
+# (and blank partials) before they reach the caption overlay.
+#
+# suppress_blank = true  (default: true — blank/whitespace-only finals are always
+#                         dropped; this is safe to leave on)
+# suppress_regex = []    # list of regex patterns (re.fullmatch, case-insensitive)
+#                        # — text matching ANY pattern is dropped.
+#                        # Invalid patterns raise an error at config load (fail-fast).
+# suppress_exact = []    # case-insensitive whole-string match after strip.
+#
+# suppress_blank = true
+# suppress_regex = [
+#   "thank you for watching",   # exact-but-regex example
+#   "please subscribe.*",        # wildcard suffix
+#   "\\[.*\\]",                  # whisper's [Music], [Applause], etc.
+# ]
+# suppress_exact = ["thank you for watching", "please like and subscribe"]
+
+# Each [[text.replacements]] block is one substitution rule.
+# Fields: match (required), replace (required), regex (bool=false),
+#         ignore_case (bool=true), whole_word (bool=false).
+# Invalid regex raises an error at config load — fail fast.
+# Note: regex patterns come from this operator-controlled file, so ReDoS
+# (catastrophic backtracking, e.g. (a+)+$) is the operator's own risk.
+# Keep patterns simple and avoid nested quantifiers over wide character classes.
+
+# [[text.replacements]]
+# match  = "whisper"        # literal string to find (default: case-insensitive)
+# replace = "Whisper"
+
+# [[text.replacements]]
+# match  = "open ai"
+# replace = "OpenAI"
+
+# [[text.replacements]]        # regex example
+# match   = "\\bw\\w+"         # TOML: double-escape backslash
+# replace = "WORD"
+# regex   = true
+# ignore_case = true
+# whole_word  = false           # whole_word adds \b…\b around the pattern
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature: Transcript export — write finals to a subtitle file  (default-off)
+# Formats: "txt" (one line per final), "srt" (SubRip), "vtt" (WebVTT).
+# Timestamps use transcript.start_ms/end_ms when available; otherwise elapsed
+# wall-clock from the start of the session is used.
+# ──────────────────────────────────────────────────────────────────────────────
+[export]
+enabled = false
+path    = "captions.srt"   # output file path (relative to cwd or absolute)
+format  = "srt"            # "txt" | "srt" | "vtt"

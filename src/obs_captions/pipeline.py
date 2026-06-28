@@ -25,9 +25,25 @@ class CaptionState:
         if max_lines < 0:
             raise ValueError("max_lines must be >= 0")
         self.max_lines = max_lines
-        self.on_change = on_change
+        self._subscribers: list[Callable[[CaptionSnapshot], None]] = []
         self._committed: list[str] = []
         self._partial = ""
+        if on_change is not None:
+            self.subscribe(on_change)
+
+    def subscribe(
+        self, callback: Callable[[CaptionSnapshot], None]
+    ) -> Callable[[], None]:
+        """Register a change subscriber; returns a callable that unsubscribes it."""
+        self._subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            try:
+                self._subscribers.remove(callback)
+            except ValueError:
+                pass
+
+        return unsubscribe
 
     def snapshot(self) -> CaptionSnapshot:
         return CaptionSnapshot(committed=list(self._committed), partial=self._partial)
@@ -41,6 +57,10 @@ class CaptionState:
             committed.append(transcript.text)
         self._mutate(committed=committed[-self.max_lines :] if self.max_lines else [], partial="")
 
+    def clear(self) -> None:
+        """Clear all committed lines and partial text, notifying subscribers."""
+        self._mutate(committed=[], partial="")
+
     def _mutate(self, *, committed: list[str] | None = None, partial: str | None = None) -> None:
         before = self.snapshot()
         if committed is not None:
@@ -48,5 +68,6 @@ class CaptionState:
         if partial is not None:
             self._partial = partial
         after = self.snapshot()
-        if after != before and self.on_change is not None:
-            self.on_change(after)
+        if after != before:
+            for subscriber in list(self._subscribers):
+                subscriber(after)

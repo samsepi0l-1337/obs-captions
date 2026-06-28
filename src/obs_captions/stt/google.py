@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+from collections.abc import Callable
 
+from obs_captions.stt.base import STTBackend, Transcript
 from obs_captions.stt.streaming import ConnectInfo, ParsedEvent, StreamingBackend
 
 _HOST = "generativelanguage.googleapis.com"
@@ -11,11 +13,28 @@ _PATH = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateC
 _DEFAULT_MODEL = "gemini-3.1-flash-live-preview"
 _MIME = "audio/pcm;rate=16000"
 
-_SPEECH_V2_MSG = (
-    "Google 'speech_v2' mode (Speech-to-Text v2 chirp_3, service account) is not "
-    "implemented. Use mode='gemini' with GEMINI_API_KEY, or implement speech_v2 "
-    "separately. See README STT table."
-)
+
+def build_google_backend(
+    *,
+    mode: str = "gemini",
+    on_partial: Callable[[Transcript], None],
+    on_final: Callable[[Transcript], None],
+    **kwargs: object,
+) -> STTBackend:
+    """Construct the google STT backend for the requested mode.
+
+    ``mode='gemini'`` → Gemini Live websocket (:class:`GoogleBackend`).
+    ``mode='speech_v2'`` → Speech-to-Text v2 streaming
+    (:class:`~obs_captions.stt.google_speech_v2.SpeechV2Backend`, chirp_2).
+    Unknown modes raise ``ValueError``.
+    """
+    if mode == "speech_v2":
+        from obs_captions.stt.google_speech_v2 import SpeechV2Backend
+
+        return SpeechV2Backend(on_partial=on_partial, on_final=on_final, **kwargs)  # type: ignore[arg-type]
+    if mode != "gemini":
+        raise ValueError(f"Unknown google mode: '{mode}' (use 'gemini' or 'speech_v2').")
+    return GoogleBackend(mode=mode, on_partial=on_partial, on_final=on_final, **kwargs)  # type: ignore[arg-type]
 
 
 class GoogleBackend(StreamingBackend):
@@ -32,7 +51,8 @@ class GoogleBackend(StreamingBackend):
     Audio-only Live sessions are capped at ~15 min; the base reconnect loop
     re-opens the socket automatically when the server closes the session.
 
-    ``mode='speech_v2'`` (chirp_3 / service account) raises NotImplementedError.
+    For ``mode='speech_v2'`` use :func:`build_google_backend`, which dispatches
+    to :class:`~obs_captions.stt.google_speech_v2.SpeechV2Backend`.
     """
 
     def __init__(
@@ -46,8 +66,6 @@ class GoogleBackend(StreamingBackend):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.mode = mode
         self.model = model
-        if mode == "speech_v2":
-            raise NotImplementedError(_SPEECH_V2_MSG)
         if mode != "gemini":
             raise ValueError(f"Unknown google mode: '{mode}' (use 'gemini' or 'speech_v2').")
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY") or ""

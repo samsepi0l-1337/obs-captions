@@ -5,7 +5,8 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from obs_captions.cli import cli
-from obs_captions.config import AppConfig, OverlayConfig, ProviderConfig, load_config
+from obs_captions.config import AppConfig, ExportConfig, LocalConfig, OverlayConfig, ProviderConfig, TextConfig, load_config
+from obs_captions.text import ReplacementRule
 
 
 def test_load_config_uses_m0_defaults(monkeypatch):
@@ -160,3 +161,184 @@ def test_overlay_config_rejects_unknown_fields():
 def test_provider_config_rejects_unknown_fields():
     with pytest.raises(ValidationError):
         ProviderConfig(model_name="typo-field")
+
+
+def test_local_config_device_and_compute_type_defaults():
+    local = LocalConfig()
+    assert local.device == "auto"
+    assert local.compute_type is None
+
+
+def test_local_config_accepts_valid_device_and_compute_type():
+    local = LocalConfig(device="cuda", compute_type="float16")
+    assert local.device == "cuda"
+    assert local.compute_type == "float16"
+    assert LocalConfig(device="cpu").device == "cpu"
+
+
+def test_local_config_rejects_invalid_device():
+    with pytest.raises(ValidationError):
+        LocalConfig(device="gpu")
+
+
+def test_local_config_round_trips_from_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+engine = "local"
+
+[local]
+model_size = "large-v3"
+device = "cuda"
+compute_type = "float16"
+cpu_threads = 2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.local.model_size == "large-v3"
+    assert config.local.device == "cuda"
+    assert config.local.compute_type == "float16"
+    assert config.local.cpu_threads == 2
+
+
+# ---------------------------------------------------------------------------
+# TextConfig + ReplacementRule
+# ---------------------------------------------------------------------------
+
+
+def test_text_config_defaults():
+    cfg = TextConfig()
+    assert cfg.replacements == []
+    assert cfg.filter_words == []
+    assert cfg.filter_mode == "mask"
+    assert cfg.filter_mask == "***"
+
+
+def test_replacement_rule_defaults():
+    rule = ReplacementRule(match="hello", replace="hi")
+    assert rule.regex is False
+    assert rule.ignore_case is True
+    assert rule.whole_word is False
+
+
+def test_replacement_rule_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        ReplacementRule(match="x", replace="y", typo_field=True)
+
+
+def test_replacement_rule_invalid_regex_raises_value_error():
+    with pytest.raises(ValueError, match="[Ii]nvalid regex"):
+        ReplacementRule(match="[bad", replace="x", regex=True)
+
+
+def test_text_config_from_toml_replacements(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[[text.replacements]]\nmatch = \"whisper\"\nreplace = \"Whisper\"\n",
+        encoding="utf-8",
+    )
+    config = load_config(str(config_path))
+    assert len(config.text.replacements) == 1
+    assert config.text.replacements[0].match == "whisper"
+    assert config.text.replacements[0].replace == "Whisper"
+
+
+def test_text_config_invalid_regex_raises_at_config_load(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[[text.replacements]]\nmatch = \"[invalid\"\nreplace = \"x\"\nregex = true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises((ValueError, ValidationError)):
+        load_config(str(config_path))
+
+
+def test_text_config_filter_words_from_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[text]\nfilter_words = ["damn", "hell"]\nfilter_mode = "remove"\nfilter_mask = "---"\n',
+        encoding="utf-8",
+    )
+    config = load_config(str(config_path))
+    assert config.text.filter_words == ["damn", "hell"]
+    assert config.text.filter_mode == "remove"
+    assert config.text.filter_mask == "---"
+
+
+# ---------------------------------------------------------------------------
+# ExportConfig
+# ---------------------------------------------------------------------------
+
+
+def test_export_config_defaults():
+    cfg = ExportConfig()
+    assert cfg.enabled is False
+    assert cfg.path == "captions.srt"
+    assert cfg.format == "srt"
+
+
+def test_export_config_rejects_unknown_format():
+    with pytest.raises(ValidationError):
+        ExportConfig(format="ass")
+
+
+def test_export_config_from_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[export]\nenabled = true\npath = "out.vtt"\nformat = "vtt"\n',
+        encoding="utf-8",
+    )
+    config = load_config(str(config_path))
+    assert config.export.enabled is True
+    assert config.export.path == "out.vtt"
+    assert config.export.format == "vtt"
+
+
+def test_app_config_has_text_and_export_fields():
+    config = load_config(None)
+    assert hasattr(config, "text")
+    assert hasattr(config, "export")
+    assert isinstance(config.text, TextConfig)
+    assert isinstance(config.export, ExportConfig)
+    # Both default to off / empty
+    assert config.export.enabled is False
+    assert config.text.replacements == []
+
+
+def test_app_config_rejects_unknown_text_subfield():
+    with pytest.raises(ValidationError):
+        AppConfig(text={"unknown_field": True})
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 fix: TextConfig strips blank strings from filter_words at load
+# ---------------------------------------------------------------------------
+
+
+def test_text_config_strips_blank_filter_words():
+    """Blank/whitespace-only strings in filter_words are removed at TextConfig
+    validation to prevent r'\\b\\b' zero-width corruption of all captions."""
+    cfg = TextConfig(filter_words=["", "bad", "  ", "word"])
+    assert "" not in cfg.filter_words
+    assert "  " not in cfg.filter_words
+    assert cfg.filter_words == ["bad", "word"]
+
+
+def test_text_config_all_blank_filter_words_yields_empty():
+    """If every entry is blank, filter_words becomes empty (identity transform)."""
+    cfg = TextConfig(filter_words=["", "   "])
+    assert cfg.filter_words == []
+
+
+def test_text_config_blank_filter_words_from_toml(tmp_path):
+    """Blank filter_words loaded from a TOML file are stripped at config-load."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[text]\nfilter_words = ["", "curse", "  "]\n',
+        encoding="utf-8",
+    )
+    config = load_config(str(config_path))
+    assert config.text.filter_words == ["curse"]
