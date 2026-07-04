@@ -30,6 +30,7 @@ gpu = [
 openai = ["openai"]
 elevenlabs = ["elevenlabs"]
 google = ["google-cloud-speech"]
+gui = ["pywebview"]
 obs = ["simpleobsws>=1.2.0"]
 bench = ["psutil>=5.9"]
 # Windows desktop/system-audio (WASAPI) loopback capture (config audio.source="loopback").

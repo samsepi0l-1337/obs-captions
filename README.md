@@ -28,11 +28,13 @@
 uv sync                            # 코어 의존성
 uv sync --extra local              # + 로컬 STT(faster-whisper, CPU)
 uv sync --extra local --extra gpu  # + Windows/Linux NVIDIA CUDA 런타임 (macOS는 gpu extra 자동 제외)
+uv sync --extra gui                 # + pywebview GUI 런처
 cp config.example.toml config.toml
 cp .env.example .env        # 클라우드 provider 키 입력(쓸 때만)
 
 uv run python -m obs_captions list-devices   # 입력 장치 목록 + 인덱스
 uv run python -m obs_captions config         # 현재 설정 확인(키는 *** 마스킹)
+uv run python -m obs_captions gui           # 설정 화면을 네이티브 창으로 열기 (pywebview)
 uv run python -m obs_captions serve --demo   # 가짜 자막으로 오버레이 서버만 띄워 보기
 uv run python -m obs_captions run            # 마이크 → STT → 자막(경로 A 서버 동시 실행)
 ```
@@ -278,10 +280,14 @@ uv run python -m obs_captions run --sink obs
 |---|---|
 | `list-devices` | 입력 오디오 장치 목록(인덱스/이름/채널) |
 | `list-loopback-devices` | WASAPI 루프백(시스템 사운드) 장치 목록 — Windows 전용(`--extra loopback`) |
+| `gui [--config PATH]` | 네이티브 창으로 설정 페이지(`http://127.0.0.1:8765/settings/`) 열기 |
 | `config` | 현재 설정 출력(API 키 마스킹) |
 | `serve [--demo]` | 오버레이 서버만 실행(`--demo`는 가짜 자막) |
 | `run [--sink browser\|obs\|both]` | 마이크 → STT → 자막 전체 파이프라인 실행 |
 | `check-engine ENGINE [--wav PATH] [--seconds N] [--language CODE]` | 엔진 연결·API 키 검증 + 선택적 WAV 스트리밍 스모크 테스트 |
+
+`gui`는 Windows WebView2(Edge) 렌더러를 사용합니다.
+Win10/11 기본에 포함되지 않은 환경에서는 Microsoft Evergreen WebView2 Runtime bootstrapper 설치가 필요할 수 있습니다.
 
 ## 스모크 테스트 (check-engine)
 
@@ -337,7 +343,7 @@ python scripts\build_windows.py
 - **CPU 기본 / GPU 옵트인**: 기본 번들은 CPU 전용(작고 NVIDIA 의존성 없음). GPU 가속(NVIDIA)이 필요하면 `python scripts\build_windows.py --gpu`(= `uv sync --extra gpu`)로 빌드하고, `obs_captions.spec`의 **GPU 블록 주석을 해제**해 `nvidia-*` DLL을 번들에 포함시킵니다.
 - **오버레이 에셋 경로**: 정적 오버레이(`overlay.{html,css,js}`)는 패키지 안(`src/obs_captions/web/overlay/`)에 들어 있어 pip 설치·번들 모두에 함께 실려 갑니다. 경로 해석은 `obs_captions/packaging.py`의 `resolve_web_dir()`가 담당합니다(개발/설치: `__file__` 기준, 프리즈: `sys._MEIPASS/obs_captions/web`).
 - **첫 실행 모델 다운로드 vs 오프라인 사전 번들**: 로컬 엔진은 기본적으로 첫 실행 시 HuggingFace에서 Whisper 모델을 내려받습니다(인터넷 필요). 완전 오프라인 배포는 모델을 미리 받아 `obs_captions.spec`의 `datas`에 추가하고 `[local] model`을 그 경로로 지정합니다(스펙 하단 주석 예시 참고).
-- **선택 extra**: 시스템 사운드(WASAPI 루프백) 자막은 `--extra loopback`(`pyaudiowpatch`, Windows 휠만), GPU 가속은 `--extra gpu`. 빌드 스크립트는 `local`+`loopback`을 기본 동기화합니다.
+- **선택 extra**: 시스템 사운드(WASAPI 루프백) 자막은 `--extra loopback`(`pyaudiowpatch`, Windows 휠만), GUI를 위한 `--extra gui`, GPU 가속은 `--extra gpu`. 빌드 스크립트는 `local`+`loopback`+`gui`을 기본 동기화합니다.
 - **스모크 테스트**: 빌드 스크립트가 마지막에 `obs-captions.exe list-devices`를 실행해 번들이 최소한 오디오 장치를 열거하는지 확인합니다.
 
 > 참고: 이 레포의 macOS/Linux 호스트에서는 실제 .exe 빌드·실행을 검증할 수 없습니다. 경로 해석 로직(`resolve_web_dir`)과 휠 에셋 포함은 단위 테스트/`uv build`로 검증되며, PyInstaller 번들 동작 자체는 Windows 빌드에서 확인해야 합니다.

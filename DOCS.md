@@ -71,12 +71,13 @@ uv pip install -e ".[local,gpu]"
 uv pip install -e ".[openai]"
 uv pip install -e ".[elevenlabs]"
 uv pip install -e ".[google]"          # Google Speech-to-Text v2
+uv pip install -e ".[gui]"             # pywebview GUI launcher
 uv pip install -e ".[azure]"
 uv pip install -e ".[obs]"             # Path B (obs-websocket)
 uv pip install -e ".[loopback]"        # Windows WASAPI 루프백
 
 # 전체
-uv pip install -e ".[local,gpu,openai,elevenlabs,google,obs,loopback,azure]"
+uv pip install -e ".[local,gpu,openai,elevenlabs,google,gui,obs,loopback,azure]"
 ```
 
 설정 파일 준비:
@@ -114,10 +115,20 @@ obs-captions config [--config PATH]
 ### `serve`
 ```bash
 obs-captions serve [--config PATH] [--demo]
-```
+``` 
 오버레이 서버만 실행 (STT 없음).  
 `--demo`: 가짜 한국어 자막으로 UI 테스트.  
 OBS에서 Browser Source URL: `http://127.0.0.1:8765/overlay`
+
+### `gui`
+```bash
+obs-captions gui [--config PATH]
+```
+`serve`와 동일한 내부 FastAPI 앱을 loopback(`127.0.0.1`)로 띄운 뒤
+네이티브 `pywebview` 창에서 설정 페이지를 엽니다.
+
+Windows 기본 `WebView2` 런타임(Win10/11)에 맞춰 동작합니다.
+누락된 경우 Microsoft Evergreen WebView2 Runtime Bootstrapper를 먼저 설치해야 합니다.
 
 ### `run`
 ```bash

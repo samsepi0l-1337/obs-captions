@@ -71,6 +71,15 @@ def serve_command(config_path: str | None, demo: bool) -> None:  # pragma: no co
     asyncio.run(_serve(config_path, demo))
 
 
+@cli.command("gui")
+@click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
+def gui_command(config_path: str | None) -> None:  # pragma: no cover  # invokes webview.start() with a live window
+    from obs_captions.gui import launch_gui_cli
+
+    config = load_config(config_path)
+    launch_gui_cli(config, config_path)
+
+
 async def _serve(config_path: str | None, demo: bool) -> None:
     from obs_captions.pipeline import CaptionState
     from obs_captions.server import Hub, create_app, wire_caption_state

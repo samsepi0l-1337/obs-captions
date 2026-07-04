@@ -52,6 +52,16 @@ hiddenimports = [
     # Windows + loopback only (lazy): system-audio (WASAPI) capture. Harmless to
     # list; only pulled in when actually installed (--extra loopback).
     "pyaudiowpatch",
+    # gui command (pywebview + Edge/WinForms): required when launching native
+    # settings window from `obs-captions gui` on Windows.
+    "webview",
+    "webview.platforms.winforms",
+    "webview.platforms.edgechromium",
+    "clr_loader",
+    "clr",
+    "pythonnet",
+    "bottle",
+    "proxy_tools",
 ]
 
 # --- GPU (CUDA) build: opt-in ---------------------------------------------

@@ -17,9 +17,9 @@ Write-Host "==> repo root: $RepoRoot"
 # 2) Sync runtime deps (CPU local engine + loopback). Uses uv (project-pinned).
 #    Add  --extra gpu  here for an NVIDIA CUDA build (and uncomment the GPU block
 #    in obs_captions.spec so the nvidia DLLs get bundled).
-Write-Host "==> uv sync (local + loopback extras)"
-uv sync --extra local --extra loopback
-# GPU (opt-in):  uv sync --extra local --extra gpu --extra loopback
+Write-Host "==> uv sync (local + loopback + gui extras)"
+uv sync --extra local --extra loopback --extra gui
+# GPU (opt-in):  uv sync --extra local --extra gpu --extra loopback --extra gui
 
 # 3) Make sure PyInstaller is available in the env.
 Write-Host "==> ensuring pyinstaller is installed"

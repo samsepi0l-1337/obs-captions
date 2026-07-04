@@ -48,7 +48,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    extras = ["--extra", "local", "--extra", "loopback"]
+    extras = ["--extra", "local", "--extra", "loopback", "--extra", "gui"]
     if args.gpu:
         extras += ["--extra", "gpu"]
 
