@@ -18,6 +18,16 @@ def _build_client(monkeypatch, tmp_path, *, config: AppConfig | None = None, con
     return TestClient(app, base_url="http://127.0.0.1:8765")
 
 
+def _build_real_client(monkeypatch, tmp_path, *, config: AppConfig | None = None, config_path=None):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = create_app(
+        Hub(),
+        config=AppConfig() if config is None else config,
+        config_path=config_path,
+    )
+    return TestClient(app, base_url="http://127.0.0.1:8765")
+
+
 def _session_token(client: TestClient) -> str:
     response = client.get("/api/session")
     assert response.status_code == 200
@@ -86,6 +96,26 @@ def test_post_api_config_rejects_invalid_body(monkeypatch, tmp_path):
         )
 
     assert response.status_code == 422
+
+
+def test_post_api_config_roundtrip_works_with_redacted_response(monkeypatch, tmp_path):
+    with _build_real_client(monkeypatch, tmp_path, config_path=tmp_path / "settings.toml") as client:
+        headers = {"X-OBS-Token": _session_token(client)}
+        baseline = client.get("/api/config", headers=headers)
+        assert baseline.status_code == 200
+        payload = baseline.json()
+        payload["overlay"]["font_size"] = 99
+        response = client.post(
+            "/api/config",
+            json=payload,
+            headers=headers,
+        )
+        assert response.status_code == 200
+        follow = client.get("/api/config", headers=headers)
+
+    assert response.json()["overlay"]["font_size"] == 99
+    assert follow.status_code == 200
+    assert follow.json()["overlay"]["font_size"] == 99
 
 
 def test_post_api_config_updates_live_overlay_preview(monkeypatch, tmp_path):
@@ -226,3 +256,73 @@ def test_get_api_session_accepts_same_origin_sec_fetch(monkeypatch, tmp_path):
         )
 
     assert response.status_code == 200
+
+
+def test_get_settings_page_returns_index_html(monkeypatch, tmp_path):
+    with _build_client(monkeypatch, tmp_path) as client:
+        response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert response.text.startswith("<!doctype html>")
+
+
+def test_get_settings_assets_return_files(monkeypatch, tmp_path):
+    with _build_client(monkeypatch, tmp_path) as client:
+        css_response = client.get("/settings/settings.css")
+        js_response = client.get("/settings/settings.js")
+
+    assert css_response.status_code == 200
+    assert js_response.status_code == 200
+    assert "font-size" in css_response.text
+    assert "(() => {" in js_response.text
+
+
+def test_get_settings_page_without_slash_redirects(monkeypatch, tmp_path):
+    with _build_real_client(monkeypatch, tmp_path) as client:
+        response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert response.url.path == "/settings/"
+    assert response.text.startswith("<!doctype html>")
+
+
+def test_get_api_keys_status_needs_token(monkeypatch, tmp_path):
+    with _build_real_client(monkeypatch, tmp_path) as client:
+        response = client.get("/api/keys/status")
+
+    assert response.status_code == 401
+
+
+def test_get_api_keys_status_reports_environment_presence(monkeypatch, tmp_path):
+    monkeypatch.setenv("ASSEMBLYAI_API_KEY", "assembly-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+
+    with _build_real_client(monkeypatch, tmp_path) as client:
+        response = client.get(
+            "/api/keys/status",
+            headers={"X-OBS-Token": _session_token(client)},
+        )
+
+    payload = response.json()
+    expected_keys = {
+        "OPENAI_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "XAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "REPLICATE_API_TOKEN",
+        "ASSEMBLYAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_CLOUD_PROJECT",
+        "AZURE_SPEECH_KEY",
+        "AZURE_SPEECH_REGION",
+        "DEEPGRAM_API_KEY",
+        "GROQ_API_KEY",
+    }
+
+    assert response.status_code == 200
+    assert set(payload) == expected_keys
+    assert payload["ASSEMBLYAI_API_KEY"] is True
+    assert payload["OPENAI_API_KEY"] is True
+    assert payload["ELEVENLABS_API_KEY"] is False
+    assert "assembly-secret" not in response.text
+    assert "openai-secret" not in response.text

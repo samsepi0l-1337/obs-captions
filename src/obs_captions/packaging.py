@@ -7,6 +7,7 @@ from pathlib import Path
 # (overlay.{html,css,js}). The server mounts this dir; the .spec ships the whole
 # web/ tree, so this stays valid in every mode below.
 _OVERLAY_SUBDIR = "overlay"
+_SETTINGS_SUBDIR = "settings"
 
 
 def resolve_web_dir() -> Path:
@@ -33,3 +34,8 @@ def resolve_web_dir() -> Path:
 def resolve_overlay_dir() -> Path:
     """Return the static overlay asset dir (``<web>/overlay``) the server mounts."""
     return resolve_web_dir() / _OVERLAY_SUBDIR
+
+
+def resolve_settings_dir() -> Path:
+    """Return the static settings asset dir (``<web>/settings``)."""
+    return resolve_web_dir() / _SETTINGS_SUBDIR

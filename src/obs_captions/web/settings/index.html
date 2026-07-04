@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OBS Captions Settings</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="top-bar">
+        <h1>OBS Captions 설정</h1>
+        <p class="hint">서버에 저장된 설정을 불러와 직접 편집하고 즉시 미리보기가 반영되는 초보자용 화면입니다.</p>
+      </header>
+
+      <nav class="tab-bar" role="tablist" aria-label="설정 탭">
+        <button class="tab-btn is-active" type="button" data-tab="engine">엔진/키</button>
+        <button class="tab-btn" type="button" data-tab="style">자막 스타일</button>
+        <button class="tab-btn" type="button" data-tab="audio">오디오</button>
+        <button class="tab-btn" type="button" data-tab="obs">OBS</button>
+      </nav>
+
+      <main class="content-wrap">
+        <section class="tab-panel is-active" id="tab-engine" role="tabpanel" aria-live="polite">
+          <h2>엔진/키</h2>
+
+          <div class="card">
+            <label class="field">
+              <span>STT 엔진</span>
+              <select id="engine-select"></select>
+              <p class="help">API 토큰 없이 시작되는 엔진을 고르면 /api/keys에서 필요한 키 입력창만 바뀝니다.</p>
+            </label>
+
+            <label class="field" id="google-mode-group" hidden>
+              <span>Google 모드</span>
+              <select id="google-mode-select">
+                <option value="gemini">Gemini Live</option>
+                <option value="speech_v2">Speech-to-Text v2</option>
+              </select>
+              <p class="help">Gemini는 `GEMINI_API_KEY`, Speech v2는 `GOOGLE_CLOUD_PROJECT`를 사용합니다.</p>
+            </label>
+
+            <div id="engine-keys" class="key-list"></div>
+            <div class="actions">
+              <button class="btn" type="button" id="save-engine-btn">엔진 저장</button>
+              <button class="btn btn-soft" type="button" id="save-keys-btn">키 저장</button>
+            </div>
+            <p class="help">키는 비밀번호 입력이므로 화면에 실제 값은 표시하지 않으며, 저장 성공 시 상태만 반영됩니다.</p>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-style" role="tabpanel" aria-live="polite">
+          <h2>자막 스타일</h2>
+
+          <div class="card">
+            <label class="field">
+              <span>폰트</span>
+              <input type="text" id="font-family" placeholder="Pretendard, 'Noto Sans KR', sans-serif" />
+              <p class="help">브라우저에 설치된 폰트가 없으면 다음 글꼴로 넘어갑니다.</p>
+            </label>
+
+            <label class="field range-field">
+              <span>폰트 크기</span>
+              <div class="range-wrap">
+                <input type="range" id="font-size" min="16" max="120" step="1" />
+                <strong id="font-size-value">48px</strong>
+              </div>
+              <p class="help">16~120 사이에서 미리보기에 바로 반영됩니다.</p>
+            </label>
+
+            <label class="field">
+              <span>폰트 굵기</span>
+              <select id="font-weight">
+                <option value="100">100</option>
+                <option value="300">300</option>
+                <option value="400">400</option>
+                <option value="500">500</option>
+                <option value="700">700</option>
+                <option value="900">900</option>
+              </select>
+              <p class="help">기본은 700(굵게)입니다.</p>
+            </label>
+
+            <label class="field color-row">
+              <span>텍스트 색상</span>
+              <input type="color" id="color" />
+            </label>
+
+            <label class="field color-row">
+              <span>부분 인식 텍스트 색상</span>
+              <input type="color" id="partial-color" />
+            </label>
+
+            <div class="field-range-grid">
+              <label class="field range-field">
+                <span>배경색</span>
+                <input type="color" id="background-color" />
+              </label>
+              <label class="field range-field">
+                <span>배경 투명도</span>
+                <div class="range-wrap">
+                  <input type="range" id="background-alpha" min="0" max="1" step="0.01" />
+                  <strong id="background-alpha-value">0.35</strong>
+                </div>
+              </label>
+            </div>
+            <p class="help">배경은 CSS `rgba()`로 저장되며, 복원은 색상+투명도 조합으로 재구성됩니다.</p>
+
+            <label class="field range-field">
+              <span>외곽선 굵기</span>
+              <div class="range-wrap">
+                <input type="range" id="outline-width" min="0" max="12" step="1" />
+                <strong id="outline-width-value">2px</strong>
+              </div>
+            </label>
+
+            <label class="field color-row">
+              <span>외곽선 색상</span>
+              <input type="color" id="outline-color" />
+            </label>
+
+            <label class="field">
+              <span>배치</span>
+              <select id="position">
+                <option value="top">상단</option>
+                <option value="middle">중앙</option>
+                <option value="bottom">하단</option>
+              </select>
+              <p class="help">캡션이 화면에서 보이는 기본 위치입니다.</p>
+            </label>
+
+            <label class="field">
+              <span>정렬</span>
+              <select id="align">
+                <option value="left">왼쪽</option>
+                <option value="center">가운데</option>
+                <option value="right">오른쪽</option>
+              </select>
+            </label>
+
+            <label class="field range-field">
+              <span>최대 줄 수</span>
+              <div class="range-wrap">
+                <input type="range" id="max-lines" min="1" max="10" step="1" />
+                <strong id="max-lines-value">3</strong>
+              </div>
+            </label>
+
+            <label class="field range-field">
+              <span>줄 간격</span>
+              <div class="range-wrap">
+                <input type="range" id="line-height" min="1" max="2.5" step="0.1" />
+                <strong id="line-height-value">1.3</strong>
+              </div>
+            </label>
+
+            <label class="field range-field">
+              <span>안쪽 여백</span>
+              <div class="range-wrap">
+                <input type="range" id="padding" min="0" max="80" step="1" />
+                <strong id="padding-value">24</strong>
+              </div>
+            </label>
+
+            <label class="field range-field">
+              <span>자간</span>
+              <div class="range-wrap">
+                <input type="range" id="letter-spacing" min="-4" max="8" step="1" />
+                <strong id="letter-spacing-value">0</strong>
+              </div>
+              <p class="help">음수 값은 글자를 더 촘촘히 붙입니다.</p>
+            </label>
+
+            <label class="field range-field">
+              <span>페이드 속도(ms)</span>
+              <div class="range-wrap">
+                <input type="range" id="fade-ms" min="50" max="1200" step="10" />
+                <strong id="fade-ms-value">200</strong>
+              </div>
+            </label>
+
+            <label class="field checkbox-field">
+              <span>대문자 고정</span>
+              <input type="checkbox" id="uppercase" />
+              <p class="help">부분/완성 텍스트 모두 대문자로 표시합니다.</p>
+            </label>
+
+            <label class="field">
+              <span>줄당 최대 문자 수</span>
+              <input type="number" id="max-chars-per-line" min="0" step="1" />
+              <p class="help">0이면 줄바꿈 기능이 꺼집니다. 너무 큰 값은 긴 문장에서 과도하게 느리게 보일 수 있습니다.</p>
+            </label>
+
+            <div class="actions">
+              <button class="btn" type="button" id="save-style-btn">자막 스타일 저장</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-audio" role="tabpanel" aria-live="polite">
+          <h2>오디오</h2>
+          <div class="card">
+            <label class="field">
+              <span>오디오 소스</span>
+              <select id="audio-source">
+                <option value="mic">마이크</option>
+                <option value="loopback">시스템 오디오(loopback)</option>
+              </select>
+              <p class="help">loopback은 Windows에서만 동작합니다. macOS/Linux에서는 마이크만 사용됩니다.</p>
+            </label>
+
+            <label class="field">
+              <span>디바이스</span>
+              <input type="text" id="audio-device" placeholder="비워두면 기본 장치" />
+              <p class="help">빈 값은 운영체제 기본 장치 사용입니다.</p>
+            </label>
+
+            <label class="field">
+              <span>샘플링 레이트</span>
+              <input type="number" id="samplerate" min="8000" max="192000" step="1" />
+              <p class="help">권장 값은 16000 또는 48000입니다.</p>
+            </label>
+
+            <label class="field">
+              <span>채널</span>
+              <input type="number" id="channels" min="1" max="2" step="1" />
+              <p class="help">마이크는 보통 1(모노), 일부 장치는 2(스테레오)도 가능합니다.</p>
+            </label>
+
+            <div class="actions">
+              <button class="btn" type="button" id="save-audio-btn">오디오 저장</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-obs" role="tabpanel" aria-live="polite">
+          <h2>OBS</h2>
+          <div class="card">
+            <label class="field">
+              <span>Server host</span>
+              <input type="text" id="server-host" disabled />
+              <p class="help">보안상 항상 127.0.0.1에 바인딩되며 이 값은 무시됩니다.</p>
+            </label>
+
+            <label class="field">
+              <span>Server port</span>
+              <input type="number" id="server-port" min="1" max="65535" step="1" />
+              <p class="help">Path A 서버가 실제 바인딩되는 포트입니다.</p>
+            </label>
+
+            <label class="field">
+              <span>OBS host</span>
+              <input type="text" id="obs-host" placeholder="localhost" />
+            </label>
+
+            <label class="field">
+              <span>OBS port</span>
+              <input type="number" id="obs-port" min="1" max="65535" step="1" />
+            </label>
+
+            <label class="field">
+              <span>OBS 소스 이름</span>
+              <input type="text" id="obs-source-name" placeholder="LiveCaptions" />
+            </label>
+
+            <label class="field checkbox-field">
+              <span>핫키 사용</span>
+              <input type="checkbox" id="hotkey-enabled" />
+            </label>
+
+            <div id="obs-hotkey-fields" hidden>
+              <label class="field">
+                <span>일시 정지 입력</span>
+                <input type="text" id="pause-input" />
+              </label>
+
+              <label class="field">
+                <span>초기화 입력</span>
+                <input type="text" id="clear-input" />
+              </label>
+            </div>
+
+            <div class="actions">
+              <button class="btn" type="button" id="save-obs-btn">OBS 설정 저장</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="live-preview card">
+          <h2>라이브 미리보기</h2>
+          <p class="help">설정한 색상/크기/배치가 오버레이에 반영되는지 즉시 확인합니다.</p>
+          <div class="overlay-frame-wrap">
+            <iframe
+              id="overlay-preview"
+              title="overlay preview"
+              src="/overlay.html"
+              sandbox="allow-scripts allow-same-origin"
+            ></iframe>
+          </div>
+          <p class="help">오버레이는 실제 자막 렌더러와 동일한 CSS 변수 기반 스타일을 사용합니다.</p>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="settings.js" defer></script>
+  </body>
+</html>

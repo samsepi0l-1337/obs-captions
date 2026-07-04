@@ -664,8 +664,15 @@ Path A / Path B 설정 화면에서 사용하는 설정 HTTP API:
 - `POST /api/config`: 바디의 `AppConfig`를 검증해 저장하고, redacted된 설정을 반환한다.
 - `POST /api/keys`: `.env` 키를 업데이트한다. `_ENV_KEY_WHITELIST`에 없는 키는 실제 파일에 쓰지 않고 `false`를 반환한다.
 - `GET /api/engines`: 지원 엔진 목록과 각 엔진의 필요 환경 변수를 반환한다.
+- `GET /api/keys/status`: 화이트리스트 env 키별 존재 여부를 `{ENV_VAR: bool}`로 반환한다(값은 절대 포함하지 않음). 설정 화면의 키 상태 배지 렌더링에 사용된다.
 
 `GET /api/session`은 부트스트랩 엔드포인트로 인증 없이 `{"token": "..."}`를 반환한다. 클라이언트는 이후 모든 `/api/*` 요청에 `X-OBS-Token` 헤더를 반드시 포함해야 하며, 서버는 `secrets.compare_digest`로 `request.app.state.session_token`과 비교한다.
+
+### Settings page
+
+- `GET /settings`는 신규 설정 화면 HTML을 제공합니다. 페이지는 토큰 부트스트랩(`/api/session`), 설정 로드(`/api/config`), 엔진 목록(`/api/engines`) 순으로 조회해 구성됩니다.
+- 라우트 등록은 오버레이 정적 라우트(`/`)보다 앞서 `/settings` 정적 마운트가 수행되어야 하며, `resolve_settings_dir()`는 `resolve_overlay_dir()`의 동일 패턴으로 웹 루트 하위의 `settings` 폴더를 가리킵니다.
+- 설정 화면은 `/api/config`와 `/api/keys`를 나눠 호출해 자막 설정을 저장하고, `/overlay-style.css` 갱신으로 오버레이 미리보기를 업데이트합니다.
 
 보안 체크 (`/api/*` 전반):
 

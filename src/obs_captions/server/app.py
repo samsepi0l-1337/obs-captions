@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import os
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -18,6 +19,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pydantic import ValidationError
@@ -29,7 +31,7 @@ from obs_captions.config import (
     save_config,
     write_env_keys,
 )
-from obs_captions.packaging import resolve_overlay_dir
+from obs_captions.packaging import resolve_overlay_dir, resolve_settings_dir
 from obs_captions.security import load_or_create_session_token
 from obs_captions.pipeline import CaptionSnapshot, CaptionState
 from obs_captions.server.hub import Hub
@@ -180,6 +182,7 @@ def create_app(
         overlay_dir = resolve_overlay_dir()
 
     engine_info = _engine_env_mapping()
+    settings_dir = resolve_settings_dir()
 
     @app.get("/api/config", dependencies=[Depends(_api_host_guard(require_token=True))])
     async def get_api_config() -> dict[str, object]:
@@ -190,8 +193,21 @@ def create_app(
         dependencies=[Depends(_api_host_guard(require_token=True))],
     )
     async def post_api_config(body: dict[str, Any]) -> dict[str, object]:
+        sanitized = dict(body)
+        sensitive_keys = {
+            "openai_api_key",
+            "elevenlabs_api_key",
+            "openrouter_api_key",
+            "replicate_api_token",
+            "xai_api_key",
+            "gemini_api_key",
+        }
+        allowed = set(AppConfig.model_fields)
+        for field_name in list(sanitized):
+            if field_name in sensitive_keys or field_name not in allowed:
+                sanitized.pop(field_name, None)
         try:
-            validated = AppConfig.model_validate(body)
+            validated = AppConfig.model_validate(sanitized)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
         save_path = Path(config_path) if config_path is not None else Path("config.toml")
@@ -212,6 +228,18 @@ def create_app(
     @app.get("/api/engines", dependencies=[Depends(_api_host_guard(require_token=True))])
     async def get_api_engines() -> list[dict[str, Any]]:
         return engine_info
+
+    @app.get("/api/keys/status", dependencies=[Depends(_api_host_guard(require_token=True))])
+    async def get_api_keys_status() -> dict[str, bool]:
+        key_names: set[str] = set()
+        for item in engine_info:
+            key_names.update(item.get("env", []))
+            key_names.update(
+                env_name
+                for mode in item.get("modes", {}).values()
+                for env_name in mode.get("env", [])
+            )
+        return {name: bool(os.getenv(name)) for name in sorted(key_names)}
 
     @app.get("/api/session", dependencies=[Depends(_api_host_guard(require_token=False))])
     async def get_api_session(request: Request) -> dict[str, str]:
@@ -243,6 +271,14 @@ def create_app(
         if not custom_path.is_file():
             raise HTTPException(status_code=404)
         return Response(custom_path.read_text(encoding="utf-8"), media_type="text/css")
+
+    @app.get("/settings", include_in_schema=False)
+    async def redirect_settings() -> Response:
+        return RedirectResponse("/settings/")
+
+    settings_path = Path(settings_dir)
+    if settings_path.exists():
+        app.mount("/settings", StaticFiles(directory=settings_path, html=True), name="settings")
 
     if overlay_dir is not None:
         overlay_path = Path(overlay_dir)
