@@ -1,12 +1,27 @@
 import json
+import os
+import re
+import sys
 
 import pytest
 from click.testing import CliRunner
 from pydantic import ValidationError
 
 from obs_captions.cli import cli
-from obs_captions.config import AppConfig, ExportConfig, LocalConfig, OverlayConfig, ProviderConfig, TextConfig, load_config
+from obs_captions.config import (
+    AudioConfig,
+    AppConfig,
+    ExportConfig,
+    LocalConfig,
+    OverlayConfig,
+    ProviderConfig,
+    TextConfig,
+    load_config,
+    save_config,
+    write_env_keys,
+)
 from obs_captions.text import ReplacementRule
+from obs_captions.security import load_or_create_session_token
 
 
 def test_load_config_uses_m0_defaults(monkeypatch):
@@ -342,3 +357,150 @@ def test_text_config_blank_filter_words_from_toml(tmp_path):
     )
     config = load_config(str(config_path))
     assert config.text.filter_words == ["curse"]
+
+
+def test_save_config_round_trip_and_omits_api_key_values(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "eleven-secret")
+
+    config = AppConfig(
+        engine="openai",
+        language="en",
+        audio=AudioConfig(device="Input 1", samplerate=32000, channels=2),
+        server={"host": "0.0.0.0", "port": 9010},
+        overlay=OverlayConfig(
+            font_family="Pretendard",
+            font_size=72,
+            font_weight=800,
+            max_chars_per_line=55,
+            custom_css=None,
+        ),
+        local={
+            "model_size": "large-v3",
+            "device": "cuda",
+            "compute_type": "float16",
+            "cpu_threads": 2,
+        },
+        providers={
+            "openai": ProviderConfig(model="whisper-1", mode="transcribe"),
+            "google": ProviderConfig(model="whisper-2", mode="gemini", location="us", project_id="p", region="us-east"),
+        },
+        text=TextConfig(
+            replacements=[
+                ReplacementRule(match="bad", replace="good"),
+                ReplacementRule(match=r"\\d+", replace="#", regex=True, ignore_case=False),
+            ],
+            filter_words=["a", "b"],
+            filter_mode="mask",
+            filter_mask="***",
+            suppress_blank=True,
+            suppress_regex=["foo", "bar"],
+            suppress_exact=["x", "y"],
+        ),
+        export={"enabled": True, "path": "captions.txt", "format": "txt"},
+    )
+    config_path = tmp_path / "config.toml"
+
+    save_config(config, config_path)
+    raw = config_path.read_text(encoding="utf-8")
+
+    assert "openai-secret" not in raw
+    assert "eleven-secret" not in raw
+    assert load_config(str(config_path)) == config
+
+
+def test_save_config_round_trip_omits_none_fields(tmp_path):
+    config = AppConfig(
+        local=LocalConfig(compute_type=None),
+        audio=AudioConfig(device=None),
+        overlay=OverlayConfig(custom_css=None),
+        providers={
+            "azure": ProviderConfig(
+                model=None, mode=None, location=None, project_id=None, region=None
+            ),
+        },
+    )
+    config_path = tmp_path / "config.toml"
+
+    save_config(config, config_path)
+    raw = config_path.read_text(encoding="utf-8")
+
+    assert "compute_type" not in raw
+    assert not re.search(r"\[audio\][\s\S]*\ndevice\s*=", raw)
+    assert "custom_css" not in raw
+    assert "model = " not in raw
+    assert "location" not in raw
+    assert "project_id" not in raw
+    assert "region" not in raw
+
+    loaded = load_config(str(config_path))
+    assert loaded == config
+
+
+def test_write_env_keys_merges_and_reinjects_env(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("KEEP=1\nOPENAI_API_KEY=old\n", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "old")
+
+    result = write_env_keys(
+        env_path,
+        {
+            "OPENAI_API_KEY": "new-openai",
+            "BOGUS_KEY": "ignored",
+            "ELEVENLABS_API_KEY": "",
+        },
+    )
+
+    assert result == {
+        "OPENAI_API_KEY": True,
+        "BOGUS_KEY": False,
+        "ELEVENLABS_API_KEY": False,
+    }
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "KEEP=1" in env_text
+    assert "OPENAI_API_KEY" in env_text
+    assert "BOGUS_KEY" not in env_text
+    assert "ELEVENLABS_API_KEY" not in env_text
+    assert os.environ["OPENAI_API_KEY"] == "new-openai"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits are not stable on Windows")
+def test_save_config_writes_private_mode_file(tmp_path):
+    config = AppConfig()
+    config_path = tmp_path / "config.toml"
+
+    save_config(config, config_path)
+
+    assert (config_path.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits are not stable on Windows")
+def test_write_env_keys_creates_private_env_file(tmp_path):
+    env_path = tmp_path / ".env"
+
+    write_env_keys(env_path, {"OPENAI_API_KEY": "sk-test", "BOGUS_KEY": "x"})
+
+    assert (env_path.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits are not stable on Windows")
+def test_session_token_file_is_private(tmp_path):
+    load_or_create_session_token(home_dir=tmp_path)
+    token_path = tmp_path / ".obs-captions" / "session-token"
+
+    assert (token_path.stat().st_mode & 0o777) == 0o600
+    assert (token_path.parent.stat().st_mode & 0o777) == 0o700
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits are not stable on Windows")
+def test_write_env_keys_does_not_chmod_existing_parent_directory(tmp_path):
+    env_parent = tmp_path / "settings"
+    env_parent.mkdir()
+    os.chmod(env_parent, 0o755)
+    env_path = env_parent / ".env"
+
+    result = write_env_keys(env_path, {"OPENAI_API_KEY": "sk-test", "BOGUS_KEY": "x"})
+
+    assert result == {"OPENAI_API_KEY": True, "BOGUS_KEY": False}
+    assert (env_parent.stat().st_mode & 0o777) == 0o755
+    assert (env_path.stat().st_mode & 0o777) == 0o600

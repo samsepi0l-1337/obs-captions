@@ -79,7 +79,9 @@ async def _serve(config_path: str | None, demo: bool) -> None:
     hub = Hub()
     state = CaptionState()
     wire_caption_state(state, hub, loop=asyncio.get_running_loop(), max_chars_per_line=config.overlay.max_chars_per_line)
-    app = create_app(hub, overlay_dir=_overlay_dir(), config=config)
+    app = create_app(
+        hub, overlay_dir=_overlay_dir(), config=config, config_path=config_path
+    )
 
     # Finding 4/7 fix: use ExitStack so export_sink.stop() is guaranteed even if
     # FakeBackend() or asyncio.create_task() raises before the try/finally below
@@ -97,8 +99,15 @@ async def _serve(config_path: str | None, demo: bool) -> None:
             )
             demo_task = asyncio.create_task(_run_demo_backend(backend))
 
+        # Loopback bind only: settings/configure APIs must stay local to the machine.
+        server_host = "127.0.0.1"
         server = uvicorn.Server(
-            uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")
+            uvicorn.Config(
+                app,
+                host=server_host,
+                port=config.server.port,
+                log_level="info",
+            )
         )
         try:
             await server.serve()
@@ -231,9 +240,15 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
     if use_browser:
         hub = Hub()
         wire_caption_state(state, hub, loop=asyncio.get_running_loop(), max_chars_per_line=config.overlay.max_chars_per_line)
-        app = create_app(hub, overlay_dir=_overlay_dir(), config=config)
+        app = create_app(
+            hub, overlay_dir=_overlay_dir(), config=config, config_path=config_path
+        )
+        # Force loopback bind for settings GUI server regardless of config.
+        server_host = "127.0.0.1"
         uv_server = uvicorn.Server(
-            uvicorn.Config(app, host=config.server.host, port=config.server.port, log_level="info")
+            uvicorn.Config(
+                app, host=server_host, port=config.server.port, log_level="info"
+            )
         )
 
     if use_obs:  # pragma: no cover

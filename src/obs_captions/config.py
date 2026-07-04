@@ -2,14 +2,72 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
+from dotenv import set_key
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
+from obs_captions.security import ensure_private_file
+from obs_captions.toml_writer import _dump_toml
 from obs_captions.text import ReplacementRule as ReplacementRule  # re-export
+
+_ENV_KEY_WHITELIST = {
+    "OPENAI_API_KEY",
+    "ELEVENLABS_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_CLOUD_PROJECT",
+    "XAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "REPLICATE_API_TOKEN",
+    "ASSEMBLYAI_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "GROQ_API_KEY",
+    "AZURE_SPEECH_KEY",
+    "AZURE_SPEECH_REGION",
+    "OBS_WS_PASSWORD",
+}
+
+
+def save_config(config: AppConfig, path: str | Path) -> None:
+    data = config.model_dump(mode="python")
+    serialized = _dump_toml(data)
+    config_path = Path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=config_path.parent, delete=False
+        ) as handle:
+            handle.write(serialized)
+            temp_path = Path(handle.name)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, config_path)
+    except Exception:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def write_env_keys(path: str | Path, mapping: dict[str, str]) -> dict[str, bool]:
+    env_path = Path(path)
+    ensure_private_file(env_path)
+    results: dict[str, bool] = {}
+    for key, value in mapping.items():
+        if key not in _ENV_KEY_WHITELIST:
+            results[key] = False
+            continue
+        if value == "":
+            results[key] = False
+            continue
+        set_key(str(env_path), key, value)
+        os.environ[key] = value
+        results[key] = True
+    os.chmod(env_path, 0o600)
+    return results
 
 
 class ProviderConfig(BaseModel):

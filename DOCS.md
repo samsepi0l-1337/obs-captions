@@ -19,7 +19,8 @@ Python 3.12 / uv. 플랫폼 1급: Windows 10/11 (CUDA), macOS Apple Silicon (CPU
 10. [트랜스크립트 내보내기](#10-트랜스크립트-내보내기)
 11. [Windows 빌드 / 배포](#11-windows-빌드--배포)
 12. [환경 변수 (.env)](#12-환경-변수-env)
-13. [모듈 구조 맵](#13-모듈-구조-맵)
+13. [Settings API](#settings-api)
+14. [모듈 구조 맵](#14-모듈-구조-맵)
 
 ---
 
@@ -655,7 +656,45 @@ OBS_WS_PASSWORD=your_obs_password
 
 ---
 
-## 13. 모듈 구조 맵
+## Settings API
+
+Path A / Path B 설정 화면에서 사용하는 설정 HTTP API:
+
+- `GET /api/config`: 현재 설정을 가져온다. API 키 값은 `***`로 마스킹된다.
+- `POST /api/config`: 바디의 `AppConfig`를 검증해 저장하고, redacted된 설정을 반환한다.
+- `POST /api/keys`: `.env` 키를 업데이트한다. `_ENV_KEY_WHITELIST`에 없는 키는 실제 파일에 쓰지 않고 `false`를 반환한다.
+- `GET /api/engines`: 지원 엔진 목록과 각 엔진의 필요 환경 변수를 반환한다.
+
+`GET /api/session`은 부트스트랩 엔드포인트로 인증 없이 `{"token": "..."}`를 반환한다. 클라이언트는 이후 모든 `/api/*` 요청에 `X-OBS-Token` 헤더를 반드시 포함해야 하며, 서버는 `secrets.compare_digest`로 `request.app.state.session_token`과 비교한다.
+
+보안 체크 (`/api/*` 전반):
+
+- Host 헤더는 `127.0.0.1` 또는 `localhost`만 허용.
+- Origin 헤더가 있으면 위 도메인만 허용.
+- Sec-Fetch-Site 헤더가 있으면 `same-origin` 또는 `none`만 허용.
+- `/api/session`을 제외한 모든 `/api/*`는 `X-OBS-Token`이 세션 토큰과 일치해야 함.
+
+서버는 `ServerConfig.host` 값을 무시하고 항상 loopback(`127.0.0.1`)로 바인딩한다.
+
+`write_env_keys`는 `_ENV_KEY_WHITELIST` 키만 파일/환경으로 반영한다.
+
+- `OPENAI_API_KEY`
+- `ELEVENLABS_API_KEY`
+- `GEMINI_API_KEY`
+- `GOOGLE_CLOUD_PROJECT`
+- `XAI_API_KEY`
+- `OPENROUTER_API_KEY`
+- `REPLICATE_API_TOKEN`
+- `ASSEMBLYAI_API_KEY`
+- `DEEPGRAM_API_KEY`
+- `GROQ_API_KEY`
+- `AZURE_SPEECH_KEY`
+- `AZURE_SPEECH_REGION`
+- `OBS_WS_PASSWORD`
+
+---
+
+## 14. 모듈 구조 맵
 
 ```
 src/obs_captions/

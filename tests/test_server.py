@@ -27,6 +27,11 @@ def test_caption_state_to_message_uses_ws_contract():
     }
 
 
+@pytest.fixture(autouse=True)
+def _force_server_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 def test_websocket_client_receives_broadcast_caption_json():
     hub = Hub()
     app = create_app(hub, overlay_dir=None)
