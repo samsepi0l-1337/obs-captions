@@ -107,10 +107,23 @@ class ObsConfig(BaseModel):
     port: int = 4455
     source_name: str = "LiveCaptions"
     hotkey: ObsHotkeyConfig = Field(default_factory=ObsHotkeyConfig)
+    reconnect_max_attempts: int = Field(default=4, ge=1)
+    reconnect_initial_delay: float = Field(default=0.5, ge=0.0)
+    reconnect_max_delay: float = Field(default=30.0, ge=0.0)
+    reconnect_backoff_multiplier: float = Field(default=2.0, ge=1.0)
+    reconnect_jitter: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @property
     def obs_ws_password(self) -> str | None:
         return os.getenv("OBS_WS_PASSWORD") or None
+
+    @model_validator(mode="after")
+    def _post_validate(self) -> "ObsConfig":
+        if self.reconnect_initial_delay > self.reconnect_max_delay:
+            raise ValueError(
+                "reconnect_initial_delay must be <= reconnect_max_delay"
+            )
+        return self
 
 
 class TextConfig(BaseModel):

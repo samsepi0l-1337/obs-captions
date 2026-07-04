@@ -239,7 +239,15 @@ async def _run(config_path: str | None, sink: str = "browser") -> None:
     if use_obs:  # pragma: no cover
         from obs_captions.obs_sink import ObsTextSink
 
-        obs_sink = ObsTextSink(state=state, config=config)
+        obs_sink = ObsTextSink(
+            state=state,
+            config=config,
+            max_connect_attempts=config.obs.reconnect_max_attempts,
+            initial_delay=config.obs.reconnect_initial_delay,
+            max_delay=config.obs.reconnect_max_delay,
+            backoff_multiplier=config.obs.reconnect_backoff_multiplier,
+            jitter=config.obs.reconnect_jitter,
+        )
         await obs_sink.start()
 
     # Finding 1 fix: use ExitStack to register export_sink.stop() immediately

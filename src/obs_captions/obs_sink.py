@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from obs_captions.obs_display import _build_display_text
@@ -96,6 +98,11 @@ class ObsTextSink:
         client: _WsClient | None = None,
         debounce_ms: int = 120,
         max_connect_attempts: int = 4,
+        initial_delay: float = 0.5,
+        max_delay: float = 30.0,
+        backoff_multiplier: float = 2.0,
+        jitter: float = 0.0,
+        jitter_fn: Callable[[], float] | None = None,
         sleep_fn: Any | None = None,
     ) -> None:
         self._state = state
@@ -112,6 +119,11 @@ class ObsTextSink:
         self._pending_tasks: set[asyncio.Future[None]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._max_connect_attempts = max_connect_attempts
+        self._initial_delay = initial_delay
+        self._max_delay = max_delay
+        self._backoff_multiplier = backoff_multiplier
+        self._jitter = jitter
+        self._jitter_fn = random.random if jitter_fn is None else jitter_fn
         self._sleep_fn = sleep_fn or asyncio.sleep
         self._url = ""
         self._reconnect_task: asyncio.Task[None] | None = None
@@ -162,7 +174,7 @@ class ObsTextSink:
         """
         assert self._client is not None
         last_exc: Exception | None = None
-        delay = 0.5
+        delay = self._initial_delay
         for attempt in range(1, self._max_connect_attempts + 1):
             try:
                 connected = await self._client.connect()
@@ -184,8 +196,11 @@ class ObsTextSink:
                     exc,
                 )
                 if attempt < self._max_connect_attempts:
-                    await self._sleep_fn(delay)
-                    delay = min(delay * 2, 30.0)
+                    # base delay is capped before jitter; with jitter set, actual sleep may exceed max_delay
+                    # by up to max_delay * jitter and this is intentional by design.
+                    jitter_amount = delay * self._jitter * self._jitter_fn()
+                    await self._sleep_fn(max(0.0, delay + jitter_amount))
+                    delay = min(delay * self._backoff_multiplier, self._max_delay)
         return last_exc
 
     async def _reconnect(self) -> bool:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -117,8 +117,22 @@ def _make_sink(
     source_name: str = "LiveCaptions",
     debounce_ms: int = 0,
     max_connect_attempts: int = 4,
+    initial_delay: float = 0.5,
+    max_delay: float = 30.0,
+    backoff_multiplier: float = 2.0,
+    jitter: float = 0.0,
+    jitter_fn: Callable[[], float] | None = None,
 ) -> ObsTextSink:
-    obs_config = ObsConfig(host="localhost", port=4455, source_name=source_name)
+    obs_config = ObsConfig(
+        host="localhost",
+        port=4455,
+        source_name=source_name,
+        reconnect_max_attempts=max_connect_attempts,
+        reconnect_initial_delay=initial_delay,
+        reconnect_max_delay=max_delay,
+        reconnect_backoff_multiplier=backoff_multiplier,
+        reconnect_jitter=jitter,
+    )
     app_config = AppConfig(obs=obs_config)
     state = CaptionState(max_lines=3)
     return ObsTextSink(
@@ -127,6 +141,11 @@ def _make_sink(
         client=client,
         debounce_ms=debounce_ms,
         max_connect_attempts=max_connect_attempts,
+        initial_delay=initial_delay,
+        max_delay=max_delay,
+        backoff_multiplier=backoff_multiplier,
+        jitter=jitter,
+        jitter_fn=jitter_fn,
     )
 
 
@@ -329,6 +348,127 @@ async def test_connect_backoff_delays_increase():
     assert len(delays) == max_attempts - 1
     for i in range(1, len(delays)):
         assert delays[i] >= delays[i - 1]
+
+
+@pytest.mark.asyncio
+async def test_connect_backoff_delays_exact_without_jitter():
+    """With jitter off, delay sequence is exactly exponential with the defaults."""
+    attempts = 0
+    max_attempts = 5
+
+    class AlwaysFailClient(FakeWsClient):
+        async def connect(self) -> bool:
+            nonlocal attempts
+            attempts += 1
+            raise OSError("refused")
+
+    client = AlwaysFailClient()
+    delays: list[float] = []
+
+    async def record_sleep(s: float) -> None:
+        delays.append(s)
+
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config)
+    state = CaptionState(max_lines=3)
+    sink = ObsTextSink(
+        state=state,
+        config=app_config,
+        client=client,
+        debounce_ms=0,
+        max_connect_attempts=max_attempts,
+        sleep_fn=record_sleep,
+    )
+    sink._password = ""
+
+    with pytest.raises(ConnectionError):
+        await sink.start()
+
+    assert attempts == max_attempts
+    assert delays == [0.5, 1.0, 2.0, 4.0]
+
+
+@pytest.mark.asyncio
+async def test_connect_backoff_delays_apply_jitter_within_expected_range():
+    """Jitter adds a bounded extra sleep without changing exponential base growth."""
+    attempts = 0
+    max_attempts = 4
+    max_delay = 30.0
+
+    class AlwaysFailClient(FakeWsClient):
+        async def connect(self) -> bool:
+            nonlocal attempts
+            attempts += 1
+            raise OSError("refused")
+
+    client = AlwaysFailClient()
+    delays: list[float] = []
+
+    async def record_sleep(s: float) -> None:
+        delays.append(s)
+
+    obs_config = ObsConfig(host="localhost", port=4455, source_name="LiveCaptions")
+    app_config = AppConfig(obs=obs_config)
+    state = CaptionState(max_lines=3)
+    sink = ObsTextSink(
+        state=state,
+        config=app_config,
+        client=client,
+        debounce_ms=0,
+        max_connect_attempts=max_attempts,
+        initial_delay=0.5,
+        max_delay=max_delay,
+        backoff_multiplier=2.0,
+        jitter=0.5,
+        jitter_fn=lambda: 1.0,
+        sleep_fn=record_sleep,
+    )
+    sink._password = ""
+
+    with pytest.raises(ConnectionError):
+        await sink.start()
+
+    assert attempts == max_attempts
+    assert len(delays) == max_attempts - 1
+
+    base_delay = 0.5
+    expected_bases: list[float] = []
+    for _ in range(max_attempts - 1):
+        expected_bases.append(base_delay)
+        base_delay = min(base_delay * 2.0, max_delay)
+
+    for slept, base in zip(delays, expected_bases, strict=True):
+        assert base <= slept <= base + base * 0.5
+        assert slept == pytest.approx(base + base * 0.5)
+
+
+def test_make_sink_wire_reconnect_config_to_constructor_params():
+    """Sink fields match reconnection config values used by caller construction."""
+    client = FakeWsClient()
+    jitter_fn_called: dict[str, int] = {"count": 0}
+
+    def fixed_jitter() -> float:
+        jitter_fn_called["count"] += 1
+        return 0.7
+
+    sink = _make_sink(
+        client,
+        max_connect_attempts=7,
+        initial_delay=0.75,
+        max_delay=12.5,
+        backoff_multiplier=1.5,
+        jitter=0.25,
+        jitter_fn=fixed_jitter,
+    )
+
+    assert sink._max_connect_attempts == 7
+    assert sink._initial_delay == 0.75
+    assert sink._max_delay == 12.5
+    assert sink._backoff_multiplier == 1.5
+    assert sink._jitter == 0.25
+    assert jitter_fn_called["count"] == 0
+    assert sink._jitter_fn() == pytest.approx(0.7)
+    assert jitter_fn_called["count"] == 1
 
 
 @pytest.mark.asyncio

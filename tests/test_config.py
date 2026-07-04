@@ -5,7 +5,16 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from obs_captions.cli import cli
-from obs_captions.config import AppConfig, ExportConfig, LocalConfig, OverlayConfig, ProviderConfig, TextConfig, load_config
+from obs_captions.config import (
+    AppConfig,
+    ExportConfig,
+    LocalConfig,
+    ObsConfig,
+    OverlayConfig,
+    ProviderConfig,
+    TextConfig,
+    load_config,
+)
 from obs_captions.text import ReplacementRule
 
 
@@ -40,6 +49,11 @@ def test_load_config_uses_m0_defaults(monkeypatch):
     assert config.overlay.fade_ms == 200
     assert config.overlay.uppercase is False
     assert config.overlay.custom_css is None
+    assert config.obs.reconnect_max_attempts == 4
+    assert config.obs.reconnect_initial_delay == 0.5
+    assert config.obs.reconnect_max_delay == 30.0
+    assert config.obs.reconnect_backoff_multiplier == 2.0
+    assert config.obs.reconnect_jitter == 0.0
 
 
 def test_invalid_engine_is_rejected():
@@ -55,6 +69,49 @@ def test_api_keys_are_read_from_environment(monkeypatch):
 
     assert config.openai_api_key == "openai-secret"
     assert config.elevenlabs_api_key == "eleven-secret"
+
+
+def test_obs_config_defaults():
+    cfg = ObsConfig()
+    assert cfg.reconnect_max_attempts == 4
+    assert cfg.reconnect_initial_delay == 0.5
+    assert cfg.reconnect_max_delay == 30.0
+    assert cfg.reconnect_backoff_multiplier == 2.0
+    assert cfg.reconnect_jitter == 0.0
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [0, -1, {"reconnect_initial_delay": -0.1}, {"reconnect_max_delay": -0.5}],
+)
+def test_obs_config_rejects_invalid_reconnect_scalar_values(bad_value):
+    if isinstance(bad_value, int):
+        with pytest.raises(ValidationError):
+            ObsConfig(reconnect_max_attempts=bad_value)
+    else:
+        with pytest.raises(ValidationError):
+            ObsConfig(**bad_value)
+
+
+def test_obs_config_rejects_invalid_backoff_multiplier():
+    with pytest.raises(ValidationError):
+        ObsConfig(reconnect_backoff_multiplier=0.9)
+
+
+def test_obs_config_rejects_initial_delay_exceeding_max_delay():
+    with pytest.raises(ValidationError):
+        ObsConfig(reconnect_initial_delay=10.0, reconnect_max_delay=5.0)
+
+
+@pytest.mark.parametrize("bad_value", [-0.1, 1.1])
+def test_obs_config_rejects_invalid_reconnect_jitter(bad_value):
+    with pytest.raises(ValidationError):
+        ObsConfig(reconnect_jitter=bad_value)
+
+
+def test_obs_config_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        ObsConfig(typo_field=True)
 
 
 def test_toml_values_override_defaults(tmp_path):
@@ -140,6 +197,18 @@ def test_config_command_outputs_json_with_redacted_api_keys(monkeypatch, tmp_pat
     assert payload["elevenlabs_api_key"] == "***"
     assert "openai-secret" not in result.output
     assert "eleven-secret" not in result.output
+
+
+def test_config_command_does_not_expose_obs_ws_password(monkeypatch, tmp_path):
+    monkeypatch.setenv("OBS_WS_PASSWORD", "obs-secret")
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('engine = "local"\n', encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["config", "--config", str(config_path)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "obs_ws_password" not in payload["obs"]
 
 
 def test_overlay_position_and_align_literals_are_validated():
