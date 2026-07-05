@@ -83,7 +83,7 @@ void write_decision_file(const std::string& exe_path,
 
     out << "## 플랫폼별 선택 메커니즘\n";
     out << "- POSIX: A (blocking read()/write() 스レッド + 파이프 fd close + SIGTERM/SIGKILL).\n";
-    out << "- Windows: A/B 구현 완료 (A: anonymous/anonymous-like pipe + TerminateProcess, B: overlapped named pipe + CancelIoEx/CancelSynchronousIo). \n";
+    out << "- Windows: A/B 구현 완료 (A: anonymous/anonymous-like pipe + TerminateProcess, B: overlapped named pipe + CancelIoEx). \n";
     out << "- Windows: 실행 환경별로 a/b/c 결과를 아래에 기록.\n\n";
 
     out << "## POSIX 결과\n";
@@ -431,17 +431,10 @@ static bool wait_child_exit(WindowsTransport& peer, int timeout_ms, int& exit_co
     return true;
 }
 
-static void request_cancel(HANDLE io_handle, const std::thread* reader, const std::thread* writer, bool overlapped_mode)
+static void request_cancel(HANDLE io_handle, bool overlapped_mode)
 {
     if (overlapped_mode && io_handle != nullptr && io_handle != INVALID_HANDLE_VALUE) {
         CancelIoEx(io_handle, nullptr);
-    }
-
-    if (reader && reader->joinable()) {
-        CancelSynchronousIo(reader->native_handle());
-    }
-    if (writer && writer->joinable()) {
-        CancelSynchronousIo(writer->native_handle());
     }
 }
 
@@ -553,15 +546,15 @@ static CaseResult run_windows_case_once(std::string_view case_id, bool use_overl
 
     bool unblocked = wait_done(io_done, 2000);
     if (!unblocked && use_overlapped) {
-        request_cancel(peer.stdin_write_handle.get(), &reader_thread, &writer_thread, true);
-        request_cancel(peer.stdout_read_handle.get(), &reader_thread, &writer_thread, true);
+        request_cancel(peer.stdin_write_handle.get(), true);
+        request_cancel(peer.stdout_read_handle.get(), true);
         unblocked = wait_done(io_done, 2000);
     }
 
     if (!unblocked) {
         peer.stdin_write_handle.reset();
         peer.stdout_read_handle.reset();
-        request_cancel(nullptr, &reader_thread, &writer_thread, false);
+        request_cancel(nullptr, false);
         unblocked = wait_done(io_done, 1000);
     }
 
