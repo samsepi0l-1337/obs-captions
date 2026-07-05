@@ -8,7 +8,7 @@ from obs_captions.stt.base import Transcript
 from obs_captions.stt.local_whisper import LocalWhisperBackend
 from obs_captions.stt.openrouter import OpenRouterBackend
 from obs_captions.stt.replicate import ReplicateBackend
-from obs_captions.stt.registry import create_backend
+from obs_captions.stt.registry import backend_cpu_bound, create_backend
 
 
 def _noop(t: Transcript) -> None:
@@ -29,6 +29,22 @@ async def test_local_engine_returns_local_whisper_backend(monkeypatch):
     cfg = AppConfig(engine="local")
     backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
     assert isinstance(backend, LocalWhisperBackend)
+
+
+@pytest.mark.parametrize(
+    ("engine", "expected"),
+    [
+        ("local", True),
+        ("openai", False),
+        ("deepgram", False),
+    ],
+)
+def test_backend_cpu_bound_matches_local_cpu_backend_rule(engine: str, expected: bool):
+    """backend_cpu_bound should return True only for local engine."""
+    from obs_captions.config import AppConfig
+
+    cfg = AppConfig(engine=engine)
+    assert backend_cpu_bound(cfg) is expected
 
 
 @pytest.mark.asyncio
