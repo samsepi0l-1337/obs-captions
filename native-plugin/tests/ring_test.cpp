@@ -19,8 +19,8 @@ int main()
 {
 	using namespace obs_native_ipc;
 
-	SeqlockRing ring(3);
-	SeqlockRing::PushResult result;
+	SeqlockRing<RingFrame> ring(3);
+	SeqlockRing<RingFrame>::PushResult result;
 
 	result = ring.push({1u, ~std::uint64_t{1u}});
 	assert_true(!result.dropped_oldest, "first push shouldn't drop");
@@ -42,7 +42,7 @@ int main()
 	assert_true(!ring.pop(frame), "ring should empty");
 
 	const std::size_t capacity = 2048u;
-	SeqlockRing stress_ring(capacity);
+	SeqlockRing<RingFrame> stress_ring(capacity);
 	std::atomic<bool> producer_done{false};
 	std::atomic<bool> okay{true};
 	std::atomic<int> pushed_frames{0};
@@ -94,7 +94,7 @@ int main()
 	for (std::size_t capacity = 2u; capacity <= 6u; ++capacity) {
 		std::atomic<bool> any_drop{false};
 		for (std::size_t run = 0u; run < 128u; ++run) {
-			SeqlockRing tiny_ring(capacity);
+			SeqlockRing<RingFrame> tiny_ring(capacity);
 			std::atomic<bool> producer_done{false};
 			std::atomic<bool> okay{true};
 			std::atomic<bool> popped_once{false};

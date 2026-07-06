@@ -9,6 +9,9 @@ set(COMMON_SOURCES
 	../src/out_queue.cpp
 	../src/quiesce.cpp
 	../src/ipc-transport.cpp
+	../src/ipc-bridge.cpp
+	../src/ipc-bridge-core.cpp
+	../src/ipc-bridge-internal.cpp
 )
 
 add_executable(framing_test framing_test.cpp ${COMMON_SOURCES})
@@ -17,10 +20,11 @@ add_executable(writer_serialize_test writer_serialize_test.cpp ${COMMON_SOURCES}
 add_executable(epoch_gate_test epoch_gate_test.cpp ${COMMON_SOURCES})
 add_executable(quiesce_test quiesce_test.cpp ${COMMON_SOURCES})
 add_executable(ipc_transport_test ipc_transport_test.cpp ${COMMON_SOURCES})
+add_executable(ipc_bridge_test ipc_bridge_test.cpp ipc_bridge_test_helpers.cpp ${COMMON_SOURCES})
 
 option(IPC_TRANSPORT_TSAN "Build ipc_transport_test with thread sanitizer" OFF)
 
-foreach(test_exec framing_test ring_test writer_serialize_test epoch_gate_test quiesce_test ipc_transport_test)
+foreach(test_exec framing_test ring_test writer_serialize_test epoch_gate_test quiesce_test ipc_transport_test ipc_bridge_test)
 	target_include_directories(${test_exec} PRIVATE ../src ../tests)
 	target_compile_features(${test_exec} PRIVATE cxx_std_17)
 endforeach()

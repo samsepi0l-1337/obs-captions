@@ -11,6 +11,9 @@ COMMON_SOURCES=(
 	"${PROJECT_ROOT}/src/out_queue.cpp"
 	"${PROJECT_ROOT}/src/quiesce.cpp"
 	"${PROJECT_ROOT}/src/ipc-transport.cpp"
+	"${PROJECT_ROOT}/src/ipc-bridge.cpp"
+	"${PROJECT_ROOT}/src/ipc-bridge-core.cpp"
+	"${PROJECT_ROOT}/src/ipc-bridge-internal.cpp"
 )
 
 TESTS=(
@@ -20,13 +23,18 @@ TESTS=(
 	"${SCRIPT_DIR}/epoch_gate_test.cpp"
 	"${SCRIPT_DIR}/quiesce_test.cpp"
 	"${SCRIPT_DIR}/ipc_transport_test.cpp"
+	"${SCRIPT_DIR}/ipc_bridge_test.cpp"
 )
 
 for test_file in "${TESTS[@]}"; do
 	test_name="$(basename "${test_file}")"
+	source_files=("${test_file}")
+	if [[ "${test_name}" == "ipc_bridge_test.cpp" ]]; then
+		source_files+=("${SCRIPT_DIR}/ipc_bridge_test_helpers.cpp")
+	fi
 	echo "==== run ${test_name} ===="
 	clang++ -std=c++17 -O1 -fsanitize=address,undefined -pthread \
-		"${test_file}" \
+		"${source_files[@]}" \
 		"${COMMON_SOURCES[@]}" \
 		-I"${PROJECT_ROOT}/src" \
 		-I"${SCRIPT_DIR}" \
