@@ -6,6 +6,14 @@ from collections.abc import Callable
 from obs_captions.stt.base import STTBackend, Transcript
 
 
+def backend_cpu_bound(config: object) -> bool:
+    """Return whether the backend should receive offloaded feed_audio execution."""
+    from obs_captions.config import AppConfig
+
+    cfg: AppConfig = config  # type: ignore[assignment]
+    return cfg.engine == "local"
+
+
 def create_backend(
     config: object,
     *,

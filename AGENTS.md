@@ -76,6 +76,7 @@
 - `uv sync`만 실행하면 local extra(torch/silero/faster-whisper)가 제거되어 VAD/local 테스트가 실패할 수 있으니 로컬 STT 검증 전 `uv sync --extra local`로 환경을 복구한다.
 - 각 도메인 폴더 `AGENTS.md`엔 즉시 따라야 하는 실패 지식·필수 운영 계약을 담는다. 세션 끝 전 새로 확인한 실패원인·안전 수정·필수 검증 명령을 갱신한다.
 - 작업이 실패하면 같은 실패를 반복하지 않도록 반대되는 안전 작업/선행 대응을 한 문장으로 해당 폴더 `AGENTS.md`에 추가한다(파괴적 롤백 아님).
+- `run_tests.sh`에서 Bash `set -u`와 빈 배열을 같이 쓰면 `unbound variable`이 날 수 있으니 optional 소스는 항상 비어있지 않은 `source_files` 배열에 누적한다.
 - 추측·일회성 로그·변할 수 있는 provider/model/가격 사실은 단정 금지. `AGENTS.md`는 200줄 이하.
 
 ## Learned User Preferences

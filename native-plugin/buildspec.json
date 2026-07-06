@@ -1,0 +1,16 @@
+{
+  "name": "obs-captions-native-plugin",
+  "description": "Hybrid option-B OBS native audio filter skeleton (audio hook + text source update stub).",
+  "target": "OBS 31.x/32.x",
+  "build": {
+    "template": "obsproject/obs-plugintemplate",
+    "notes": [
+      "실제 빌드는 obs-plugintemplate의 스캐폴딩 위에 이 native-plugin/src/를 얹어 Windows VS2022 + obs-studio 31.x/32.x 경로로 진행합니다."
+    ]
+  },
+  "obs": {
+    "dependency": "obs-studio",
+    "pin": "31.x"
+  },
+  "deps": ["libobs"]
+}
