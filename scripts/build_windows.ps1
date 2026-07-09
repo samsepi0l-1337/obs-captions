@@ -14,16 +14,16 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 Write-Host "==> repo root: $RepoRoot"
 
-# 2) Sync runtime deps (CPU local engine + loopback). Uses uv (project-pinned).
+# 2) Sync runtime deps (CPU local engine + loopback + OBS websocket). Uses uv (project-pinned).
 #    Add  --extra gpu  here for an NVIDIA CUDA build (and uncomment the GPU block
 #    in obs_captions.spec so the nvidia DLLs get bundled).
-Write-Host "==> uv sync (local + loopback extras)"
-uv sync --extra local --extra loopback
-# GPU (opt-in):  uv sync --extra local --extra gpu --extra loopback
+Write-Host "==> uv sync (local + loopback + obs extras)"
+uv sync --extra local --extra loopback --extra obs
+# GPU (opt-in):  uv sync --extra local --extra loopback --extra obs --extra gpu
 
 # 3) Make sure PyInstaller is available in the env.
-Write-Host "==> ensuring pyinstaller is installed"
-uv pip install pyinstaller
+Write-Host "==> ensuring pinned pyinstaller is installed"
+uv pip install "pyinstaller==6.14.1"
 
 # 4) Build the bundle from the spec (onedir, hidden imports + datas defined there).
 Write-Host "==> pyinstaller obs_captions.spec"

@@ -3,6 +3,15 @@ revision = 3
 requires-python = "==3.12.*"
 
 [[package]]
+name = "altgraph"
+version = "0.17.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/f8/97fdf103f38fed6792a1601dbc16cc8aac56e7459a9fff08c812d8ae177a/altgraph-0.17.5.tar.gz", hash = "sha256:c87b395dd12fabde9c99573a9749d67da8d29ef9de0125c7f536699b4a9bc9e7", size = 48428, upload-time = "2025-11-21T20:35:50.583Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/ba/000a1996d4308bc65120167c21241a3b205464a2e0b58deda26ae8ac21d1/altgraph-0.17.5-py2.py3-none-any.whl", hash = "sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597", size = 21228, upload-time = "2025-11-21T20:35:49.444Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -266,34 +275,34 @@ wheels = [
 
 [package.optional-dependencies]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cufft" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cufile" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-cupti" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-curand" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusolver" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusparse" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvjitlink" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-nvrtc" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvtx" },
 ]
 
 [[package]]
@@ -621,6 +630,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/95/a06692b29e77473f286e1ec1f426d3ca44d7b5843be8ad21d7a5f3fcdcc0/jiter-0.15.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:b6c0ffae686c39bf3737be60793783267628783ea42545632c10b291105aee45", size = 305128, upload-time = "2026-05-19T10:09:43.657Z" },
     { url = "https://files.pythonhosted.org/packages/23/85/7270d7ad41d6061a25b950c6bf91d638bd9aacb113200a8c8d57a055fd67/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d54fb5b31dea401a41af3f8a7d2512e9b6a6a005491e6166c7e4ffab9639a9c", size = 340459, upload-time = "2026-05-19T10:09:45.452Z" },
     { url = "https://files.pythonhosted.org/packages/c8/8d/302cb2057b7513327b4d575cff6b1d066ee6431a5357fc3f8867cd684406/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54d5d6090cdc1b7c9e780dfb04949a990adb1e301a2fc0bbcee7de4638d33f9a", size = 344469, upload-time = "2026-05-19T10:09:46.864Z" },
+]
+
+[[package]]
+name = "macholib"
+version = "1.16.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "altgraph" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz", hash = "sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362", size = 59427, upload-time = "2025-11-22T08:28:38.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/d1/a9f36f8ecdf0fb7c9b1e78c8d7af12b8c8754e74851ac7b94a8305540fc7/macholib-1.16.4-py2.py3-none-any.whl", hash = "sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea", size = 38117, upload-time = "2025-11-22T08:28:36.939Z" },
 ]
 
 [[package]]
@@ -959,6 +980,7 @@ openai = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "pyinstaller" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -995,6 +1017,7 @@ provides-extras = ["local", "gpu", "openai", "elevenlabs", "google", "obs", "ben
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx" },
+    { name = "pyinstaller", specifier = "==6.14.1" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1045,6 +1068,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
+]
+
+[[package]]
+name = "pefile"
+version = "2023.2.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/c5/3b3c62223f72e2360737fd2a57c30e5b2adecd85e70276879609a7403334/pefile-2023.2.7.tar.gz", hash = "sha256:82e6114004b3d6911c77c3953e3838654b04511b8b66e8583db70c65998017dc", size = 74854, upload-time = "2023-02-07T12:23:55.958Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/26/d0ad8b448476d0a1e8d3ea5622dc77b916db84c6aa3cb1e1c0965af948fc/pefile-2023.2.7-py3-none-any.whl", hash = "sha256:da185cd2af68c08a6cd4481f7325ed600a88f6a813bad9dea07ab3ef73d8d8d6", size = 71791, upload-time = "2023-02-07T12:28:36.678Z" },
 ]
 
 [[package]]
@@ -1207,6 +1239,46 @@ wheels = [
 ]
 
 [[package]]
+name = "pyinstaller"
+version = "6.14.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "altgraph" },
+    { name = "macholib", marker = "sys_platform == 'darwin'" },
+    { name = "packaging" },
+    { name = "pefile", marker = "sys_platform == 'win32'" },
+    { name = "pyinstaller-hooks-contrib" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/4a/d66d3a9c34349d73eb099401060e2591da8ccc5ed427e54fff3961302513/pyinstaller-6.14.1.tar.gz", hash = "sha256:35d5c06a668e21f0122178dbf20e40fd21012dc8f6170042af6050c4e7b3edca", size = 4284317, upload-time = "2025-06-08T18:45:46.367Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/f6/fa56e547fe849db4b8da0acaad6101a6382c18370c7e0f378a1cf0ea89f0/pyinstaller-6.14.1-py3-none-macosx_10_13_universal2.whl", hash = "sha256:da559cfe4f7a20a7ebdafdf12ea2a03ea94d3caa49736ef53ee2c155d78422c9", size = 999937, upload-time = "2025-06-08T18:44:26.429Z" },
+    { url = "https://files.pythonhosted.org/packages/af/a6/a2814978f47ae038b1ce112717adbdcfd8dfb9504e5c52437902331cde1a/pyinstaller-6.14.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:f040d1e3d42af3730104078d10d4a8ca3350bd1c78de48f12e1b26f761e0cbc3", size = 719569, upload-time = "2025-06-08T18:44:30.948Z" },
+    { url = "https://files.pythonhosted.org/packages/35/f0/86391a4c0f558aef43a7dac8f678d46f4e5b84bd133308e3ea81f7384ab9/pyinstaller-6.14.1-py3-none-manylinux2014_i686.whl", hash = "sha256:7b8813fb2d5a82ef4ceffc342ed9a11a6fc1ef21e68e833dbd8fedb8a188d3f5", size = 729824, upload-time = "2025-06-08T18:44:34.983Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/88/446814e335d937406e6e1ae4a77ed922b8eea8b90f3aaf69427a16b58ed2/pyinstaller-6.14.1-py3-none-manylinux2014_ppc64le.whl", hash = "sha256:e2cfdbc6dd41d19872054fc233da18856ec422a7fdea899b6985ae04f980376a", size = 727937, upload-time = "2025-06-08T18:44:38.954Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/0f/5aa891c61d303ad4a794b7e2f864aacf64fe0f6f5559e2aec0f742595fad/pyinstaller-6.14.1-py3-none-manylinux2014_s390x.whl", hash = "sha256:a4d53b3ecb5786b097b79bda88c4089186fc1498ef7eaa6cee57599ae459241e", size = 724762, upload-time = "2025-06-08T18:44:42.768Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/92/e32ec0a1754852a8ed5a60f6746c6483e3da68aee97d314f3a3a99e0ed9e/pyinstaller-6.14.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:c48dd257f77f61ebea2d1fdbaf11243730f2271873c88d3b5ecb7869525d3bcb", size = 724957, upload-time = "2025-06-08T18:44:46.829Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/66/1260f384e47bf939f6238f791d4cda7edb94771d2fa0a451e0edb21ac9c7/pyinstaller-6.14.1-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:5b05cbb2ffc033b4681268159b82bac94b875475c339603c7e605f00a73c8746", size = 724132, upload-time = "2025-06-08T18:44:51.081Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/8b/8570ab94ec07e0b2b1203f45840353ee76aa067a2540c97da43d43477b26/pyinstaller-6.14.1-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:d5fd73757c8ea9adb2f9c1f81656335ba9890029ede3031835d768fde36e89f0", size = 723847, upload-time = "2025-06-08T18:44:54.896Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/43/6c68dc9e53b09ff948d6e46477932b387832bbb920c48061d734ef089368/pyinstaller-6.14.1-py3-none-win32.whl", hash = "sha256:547f7a93592e408cbfd093ce9fd9631215387dab0dbf3130351d3b0b1186a534", size = 1299744, upload-time = "2025-06-08T18:45:00.781Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/dd/bb8d5bcb0592f7f5d454ad308051d00ed34f8b08d5003400b825cfe35513/pyinstaller-6.14.1-py3-none-win_amd64.whl", hash = "sha256:0794290b4b56ef9d35858334deb29f36ec1e1f193b0f825212a0aa5a1bec5a2f", size = 1357625, upload-time = "2025-06-08T18:45:06.826Z" },
+    { url = "https://files.pythonhosted.org/packages/89/57/8a8979737980e50aa5031b77318ce783759bf25be2956317f2e1d7a65a09/pyinstaller-6.14.1-py3-none-win_arm64.whl", hash = "sha256:d9d99695827f892cb19644106da30681363e8ff27b8326ac8416d62890ab9c74", size = 1298607, upload-time = "2025-06-08T18:45:12.766Z" },
+]
+
+[[package]]
+name = "pyinstaller-hooks-contrib"
+version = "2026.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/5b/c9fe0db5e83ee1c39b2258fa21d23b15e1a60786b6c5990ee5074ead8bb6/pyinstaller_hooks_contrib-2026.6.tar.gz", hash = "sha256:bef5002c32f4f50bd55b005da12cff64eca8783e7eaf86a06a62410164bab725", size = 173354, upload-time = "2026-06-08T22:37:16.152Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/31/f2d7343d8ed5f7c4678377886f6ce533e6eaaa131b252ce950114c2a7efa/pyinstaller_hooks_contrib-2026.6-py3-none-any.whl", hash = "sha256:fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3", size = 457159, upload-time = "2026-06-08T22:37:14.722Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1256,6 +1328,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "pywin32-ctypes"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/9f/01a1a99704853cb63f253eea009390c88e7131c67e66a0a02099a8c917cb/pywin32-ctypes-0.2.3.tar.gz", hash = "sha256:d162dc04946d704503b2edc4d55f3dba5c1d539ead017afa00142c38b9885755", size = 29471, upload-time = "2024-08-14T10:15:34.626Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/3d/8161f7711c017e01ac9f008dfddd9410dff3674334c233bde66e7ba65bbf/pywin32_ctypes-0.2.3-py3-none-any.whl", hash = "sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8", size = 30756, upload-time = "2024-08-14T10:15:33.187Z" },
 ]
 
 [[package]]

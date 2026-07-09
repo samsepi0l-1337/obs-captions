@@ -24,17 +24,14 @@ dist\obs-captions\
 - `obs-captions.exe`는 **콘솔(명령 프롬프트) 앱**이다. 실행하면 검은 로그 창이 뜬다 — 정상이다(음성 인식 로그·오류가 여기에 찍힌다).
 - 폴더를 통째로 옮기면(예: `C:\obs-captions\`) 어디서든 동작한다. **exe만 떼어내면 실행되지 않는다.**
 
-> 참고: 초보자용 **설정 GUI(별도 창)**도 이 exe 안에 함께 들어 있다. `obs-captions.exe gui`로 실행한다(아래 5번).
-
 ---
 
 ## 3. exe로 할 수 있는 작업 (명령어)
 
-명령 프롬프트(cmd)나 PowerShell에서 `obs-captions.exe <명령>` 형태로 쓴다. 실제 명령은 7종(`gui`·`run`·`list-devices`·`list-loopback-devices`·`config`·`serve`·`check-engine`)이며, 아래 표에는 `run`을 sink별 변형까지 풀어 보여준다.
+명령 프롬프트(cmd)나 PowerShell에서 `obs-captions.exe <명령>` 형태로 쓴다. 일반 사용 명령은 `run`·`list-devices`·`list-loopback-devices`·`config`·`serve`·`check-engine`이며, 아래 표에는 `run`을 sink별 변형까지 풀어 보여준다. `ipc-sidecar`는 OBS 네이티브 플러그인 연동용 내부 명령이라 사람이 직접 실행하지 않는다.
 
 | 명령 | 하는 일 |
 |---|---|
-| `obs-captions.exe gui` | **초보자용 설정 창**을 연다(API 키·엔진·모델·줄 수·CSS를 클릭으로 설정). 가장 쉬운 시작점. |
 | `obs-captions.exe run` | **실제 자막 생성 시작.** 소리 → 음성 인식 → 자막 출력. 평소 방송할 때 쓰는 핵심 명령. |
 | `obs-captions.exe run --sink obs` | 자막을 **OBS 텍스트 소스**로 직접 밀어 넣는다(obs-websocket 사용). |
 | `obs-captions.exe run --sink browser` | 자막을 **브라우저 오버레이 서버**로 내보낸다(OBS 브라우저 소스로 캡처). 기본값. |
@@ -45,7 +42,7 @@ dist\obs-captions\
 | `obs-captions.exe serve --demo` | 실제 음성 없이 **가짜 한국어 자막**을 흘려보내 오버레이 배치·CSS를 테스트. |
 | `obs-captions.exe check-engine` | 선택한 **음성 인식 엔진이 정상 준비됐는지 점검**(키·모델 확인). |
 
-가장 흔한 사용 흐름은 **`gui`로 한 번 설정 → `run`으로 방송** 두 가지다.
+가장 흔한 사용 흐름은 **설정 파일 준비 → `check-engine` 점검 → `run`으로 방송**이다.
 
 ---
 
@@ -73,24 +70,15 @@ dist\obs-captions\
 
 ---
 
-## 5. 초보자용 설정 창 (`gui`)
+## 5. 설정 파일 준비
 
-터미널이 낯설다면 이것부터 쓴다.
+배포 폴더의 `config.example.toml`을 `config.toml`로 복사한 뒤, 필요한 값만 수정한다. API 키가 필요한 클라우드 엔진을 쓰면 `.env` 파일을 만들고 키를 넣는다. 설정 확인은 `obs-captions.exe config`로 한다(API 키는 가려서 출력).
 
+```powershell
+copy config.example.toml config.toml
+New-Item -ItemType File .env
+obs-captions.exe config
 ```
-obs-captions.exe gui
-```
-
-네이티브 창(윈도우에서는 WebView2 기반)이 뜨고, 탭으로 나뉜 설정을 **클릭·입력**으로 바꾼다.
-
-- **[엔진 / 키]** — 음성 인식 엔진과 LLM 모델 선택, 프로바이더별 **API 키** 입력.
-- **[자막 스타일]** — 글꼴, 글자 크기, 굵기, 색, **표시할 줄 수(max_lines)** 등 CSS 값. 미리보기로 바로 확인.
-- **[오디오]** — 마이크 / 시스템 루프백 입력 선택.
-- **[OBS]** — obs-websocket 접속 정보(주소·비밀번호), 텍스트 소스 이름.
-
-설정한 값은 로컬 설정 파일(TOML)에 안전하게 저장되고(파일 권한 0600), API 키는 설정 파일이 아닌 별도 환경 파일에 보관돼 노출을 줄인다. 저장 후 `obs-captions.exe run`으로 방송을 시작하면 된다.
-
-> **WebView2 런타임**이 필요하다. 최신 윈도우 10/11에는 기본 포함돼 있으나, 창이 안 뜨면 Microsoft "Edge WebView2 Runtime"을 한 번 설치하면 된다.
 
 ---
 
@@ -98,7 +86,7 @@ obs-captions.exe gui
 
 1. `dist\obs-captions\` 폴더를 원하는 위치(예: `C:\obs-captions\`)에 복사한다.
 2. `obs-captions.exe list-devices`로 마이크 번호를 확인한다(선택).
-3. `obs-captions.exe gui`로 엔진·키·스타일·오디오·OBS를 설정한다.
+3. `config.toml`과 `.env`에 엔진·키·스타일·오디오·OBS 설정을 적는다.
 4. `obs-captions.exe check-engine`으로 엔진 준비 상태를 점검한다.
 5. `obs-captions.exe serve --demo`로 자막 위치·CSS를 미리 맞춘다(선택).
 6. OBS에서 브라우저 소스(browser sink) 또는 텍스트 소스(obs sink)를 준비한다.
@@ -114,7 +102,7 @@ obs-captions.exe gui
 .\scripts\build_windows.ps1
 ```
 
-- 내부적으로 `uv sync --extra local --extra loopback --extra gui`로 런타임 의존성(로컬 엔진·루프백·GUI)을 맞추고, `pyinstaller obs_captions.spec`로 **onedir 번들**을 만든다.
+- 내부적으로 `uv sync --extra local --extra loopback --extra obs`로 런타임 의존성(로컬 엔진·루프백·OBS websocket)을 맞추고, `pyinstaller obs_captions.spec`로 **onedir 번들**을 만든다.
 - 결과: `dist\obs-captions\obs-captions.exe` (+ `_internal\`).
 - 빌드 마지막에 `obs-captions.exe list-devices` 스모크 테스트로 오디오 스택이 정상 로드되는지 확인한다.
 - **GPU(NVIDIA CUDA) 빌드**는 옵트인이다: 스크립트의 `--extra gpu`와 `.spec`의 GPU 블록 주석을 해제한다.
@@ -128,7 +116,6 @@ obs-captions.exe gui
 |---|---|
 | exe만 복사했더니 실행 안 됨 | `_internal\` 폴더가 있어야 한다. **폴더째** 복사할 것. |
 | 검은 콘솔 창이 계속 떠 있음 | 정상이다. 로그·오류 출력용 창이며, 닫으면 프로그램도 종료된다. |
-| `gui` 창이 안 뜸 | WebView2 런타임 미설치. Microsoft Edge WebView2 Runtime 설치 후 재시도. |
 | 자막이 OBS에 안 보임 | browser sink면 OBS 브라우저 소스 주소 확인, obs sink면 obs-websocket 접속 정보·텍스트 소스 이름 확인. |
 | 시스템 소리에 자막을 달고 싶음 | `list-loopback-devices`로 장치 확인 후 `[audio] source = "loopback"` 설정(윈도우 전용). |
-| API 키 오류 | `check-engine`으로 점검. `gui`의 [엔진/키] 탭에서 해당 프로바이더 키 재입력. |
+| API 키 오류 | `check-engine`으로 점검. `.env`의 해당 프로바이더 키를 확인. |

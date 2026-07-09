@@ -25,6 +25,10 @@ class ProviderConfig(BaseModel):
     project_id: str | None = None
     # azure: service region override (falls back to env AZURE_SPEECH_REGION)
     region: str | None = None
+    # openai realtime: whisper latency/accuracy tradeoff
+    # (minimal|low|medium|high|xhigh); translate target language (e.g. "en").
+    delay: str | None = None
+    target_language: str | None = None
 
 
 class AudioConfig(BaseModel):

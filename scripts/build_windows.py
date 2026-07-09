@@ -48,12 +48,12 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    extras = ["--extra", "local", "--extra", "loopback"]
+    extras = ["--extra", "local", "--extra", "loopback", "--extra", "obs"]
     if args.gpu:
         extras += ["--extra", "gpu"]
 
     _run(["uv", "sync", *extras])
-    _run(["uv", "pip", "install", "pyinstaller"])
+    _run(["uv", "pip", "install", "pyinstaller==6.14.1"])
     _run(["uv", "run", "pyinstaller", "--noconfirm", str(SPEC)])
 
     # Smoke test the frozen exe (enumerate audio devices).

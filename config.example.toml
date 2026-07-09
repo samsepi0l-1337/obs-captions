@@ -64,8 +64,11 @@ model = "openai/whisper"
 
 # Realtime streaming providers (M3b):
 
-[providers.openai]            # .env: OPENAI_API_KEY — Realtime transcription (24kHz upsample)
+[providers.openai]            # .env: OPENAI_API_KEY — Realtime (24kHz upsample)
+# model: gpt-realtime-whisper | gpt-realtime-translate | gpt-realtime-2.1
 model = "gpt-realtime-whisper"
+# delay = "low"                 # whisper only: minimal|low|medium|high|xhigh
+# target_language = "en"        # translate only: output language (e.g. en, ja)
 
 [providers.elevenlabs]        # .env: ELEVENLABS_API_KEY — Scribe v2 Realtime (~150ms)
 model = "scribe_v2_realtime"

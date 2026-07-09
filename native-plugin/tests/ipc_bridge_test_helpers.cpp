@@ -4,6 +4,7 @@
 #include "framing.hpp"
 
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -226,31 +227,6 @@ bool send_stale_caption(std::uint32_t epoch, const std::string &text)
 	return write_all_stdout(frame);
 }
 
-std::FILE *child_log_file()
-{
-	static std::FILE *fp = nullptr;
-	static bool initialized = false;
-	if (!initialized) {
-		initialized = true;
-		const char *path = std::getenv("OBS_BRIDGE_TEST_CHILD_LOG");
-		if (path && path[0] != '\0') {
-			fp = std::fopen(path, "a");
-		} else {
-			fp = reinterpret_cast<std::FILE *>(-1);
-		}
-	}
-	return (fp == reinterpret_cast<std::FILE *>(-1)) ? nullptr : fp;
-}
-
-void child_log(const char *message)
-{
-	if (std::FILE *fp = child_log_file()) {
-		std::fputs(message, fp);
-		std::fputc('\n', fp);
-		std::fflush(fp);
-	}
-}
-
 obs_native_ipc::SpawnConfig fake_config(const char *argv0, const char *mode)
 {
 	return obs_native_ipc::SpawnConfig{{argv0, "--fake-child", mode}};
@@ -279,6 +255,11 @@ int run_fake_child(const std::string &mode)
 	if (mode == "exit_before_ready") {
 		return 0;
 	}
+#ifndef _WIN32
+	if (mode == "sigterm_ignore") {
+		std::signal(SIGTERM, SIG_IGN);
+	}
+#endif
 	const bool debug = std::getenv("OBS_BRIDGE_TEST_DEBUG") != nullptr;
 	std::vector<std::uint8_t> in_buf;
 	in_buf.reserve(4096u);
@@ -338,6 +319,11 @@ int run_fake_child(const std::string &mode)
 						return 1;
 					}
 					child_log("fake_child send_ready_ok");
+					if (mode == "sigterm_ignore") {
+						while (true) {
+							std::this_thread::sleep_for(1s);
+						}
+					}
 					if (mode == "heartbeat_restart") {
 						if (saw_first_hello) {
 							if (!sent_stale) {
@@ -359,6 +345,9 @@ int run_fake_child(const std::string &mode)
 				std::uint64_t seq = 0u;
 				if (!parse_control(f.payload, command, seq)) {
 					return 1;
+				}
+				if (mode == "no_control_reply") {
+					break;
 				}
 				switch (command) {
 				case 1u:

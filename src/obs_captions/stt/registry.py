@@ -77,6 +77,10 @@ def create_backend(
         kwargs: dict[str, object] = {"api_key": api_key}
         if provider_cfg and provider_cfg.model:
             kwargs["model"] = provider_cfg.model
+        if provider_cfg and provider_cfg.delay:
+            kwargs["delay"] = provider_cfg.delay
+        if provider_cfg and provider_cfg.target_language:
+            kwargs["target_language"] = provider_cfg.target_language
         return OpenAIRealtimeBackend(**kwargs, **common)
 
     if engine == "elevenlabs":

@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -58,14 +59,60 @@ public:
 	void set_caption_callback(CaptionCallback cb);
 	void push_audio(const float *planar, std::size_t num_samples, std::size_t num_channels);
 
+#ifdef OBS_NATIVE_IPC_TESTING
+	void test_request_restart();
+	std::shared_ptr<Waiter> test_enqueue_control(ControlCommand command);
+	std::uint64_t test_next_control_seq() const;
+	bool test_has_in_flight(ControlCommand command) const;
+	void test_timeout_control(ControlCommand command, std::uint64_t seq);
+	void test_inject_caption(std::uint32_t reader_epoch, std::uint32_t payload_epoch, std::uint64_t seq,
+				 const std::string &text);
+	void test_inject_status(std::uint32_t reader_epoch, std::uint16_t code, std::uint64_t seq);
+	void test_inject_flush_done(std::uint32_t reader_epoch, std::uint64_t seq);
+	std::size_t test_teardown_count() const;
+	std::uint8_t test_terminal_state() const;
+	bool test_session_running() const;
+		bool test_ring_released() const;
+		std::size_t test_ring_capacity() const;
+		std::size_t test_control_queue_reset_count() const;
+		void test_pause_before_respawn(bool enabled);
+		bool test_wait_before_respawn(std::chrono::milliseconds timeout);
+		void test_release_before_respawn();
+		void test_pause_after_producer_enter(bool enabled);
+		bool test_wait_after_producer_enter(std::chrono::milliseconds timeout);
+		void test_release_after_producer_enter();
+		void test_pause_writer_before_exit(bool enabled);
+		bool test_wait_writer_before_exit(std::chrono::milliseconds timeout);
+		void test_release_writer_before_exit();
+		bool test_wait_writer_exited(std::chrono::milliseconds timeout);
+#endif
+
 private:
+	enum class Desired : std::uint8_t {
+		Run = 0,
+		Restart = 1,
+		Destroy = 2,
+	};
+
+	enum class TerminalState : std::uint8_t {
+		None = 0,
+		Inactive = 1,
+		Degraded = 2,
+	};
+
 	bool run_session_loop();
 	bool start_session();
-	void stop_session();
 	void run_writer();
 	void run_reader();
 	void run_heartbeat();
 	void request_restart();
+	void request_destroy();
+	void latch_desired(Desired desired);
+	Desired desired() const;
+	Desired execute_teardown();
+	void advance_epoch_for_teardown();
+	void set_ready_state(bool ready);
+	void mark_degraded();
 	void join_threads(std::chrono::milliseconds timeout);
 
 	bool send_hello(std::uint32_t session_epoch);
@@ -80,6 +127,11 @@ private:
 	void clear_control_queue();
 	void backoff_sleep(std::size_t restart_count);
 	std::uint64_t now_ns() const;
+	std::shared_ptr<SeqlockRing<AudioSlot>> audio_ring_snapshot() const;
+	std::shared_ptr<ProducerQuiesce> quiesce_snapshot() const;
+	void reset_audio_path(std::size_t capacity);
+	void release_audio_ring();
+	void notify_thread_exit();
 
 	void append_u16(std::vector<std::uint8_t> &out, std::uint16_t value);
 	void append_u32(std::vector<std::uint8_t> &out, std::uint32_t value);
@@ -99,23 +151,34 @@ private:
 	ChildTransport transport_;
 	OutQueue control_queue_{16};
 	EpochGate epoch_gate_{0};
-	ProducerQuiesce quiesce_;
-	SeqlockRing<AudioSlot> audio_ring_{64};
+	std::shared_ptr<ProducerQuiesce> quiesce_{std::make_shared<ProducerQuiesce>()};
+	std::shared_ptr<SeqlockRing<AudioSlot>> audio_ring_{std::make_shared<SeqlockRing<AudioSlot>>(64)};
 
 	std::atomic<bool> running_{false};
 	std::atomic<bool> stop_requested_{false};
 	std::atomic<bool> restart_requested_{false};
 	std::atomic<bool> session_ready_{false};
 	std::atomic<bool> session_running_{false};
+	std::atomic<std::uint8_t> desired_{static_cast<std::uint8_t>(Desired::Run)};
+	std::atomic<bool> teardown_owner_{false};
+	std::atomic<bool> no_respawn_{false};
+	std::atomic<std::uint8_t> terminal_state_{static_cast<std::uint8_t>(TerminalState::None)};
+	std::atomic<std::size_t> teardown_count_{0};
+	std::atomic<bool> ring_released_{false};
 	std::atomic<std::uint32_t> session_epoch_{0};
 	std::atomic<std::uint64_t> next_control_seq_{1u};
 	std::atomic<std::uint64_t> next_audio_seq_{1u};
+	std::atomic<bool> writer_exited_{true};
+	std::atomic<bool> reader_exited_{true};
+	std::atomic<bool> heartbeat_exited_{true};
 
 	std::thread supervisor_thread_;
 	std::thread writer_thread_;
 	std::thread reader_thread_;
 	std::thread heartbeat_thread_;
 	std::mutex transport_write_mutex_;
+	mutable std::mutex audio_mutex_;
+	mutable std::mutex epoch_mutex_;
 	mutable std::mutex state_mutex_;
 	std::condition_variable ready_cv_;
 	std::condition_variable state_cv_;
@@ -124,6 +187,20 @@ private:
 	std::mutex callback_mutex_;
 
 	std::atomic<std::uint64_t> last_heartbeat_ns_{0u};
+
+#ifdef OBS_NATIVE_IPC_TESTING
+	std::atomic<bool> test_pause_before_respawn_{false};
+	std::atomic<bool> test_paused_before_respawn_{false};
+	std::atomic<bool> test_release_before_respawn_{false};
+		std::atomic<bool> test_pause_after_producer_enter_{false};
+		std::atomic<bool> test_paused_after_producer_enter_{false};
+		std::atomic<bool> test_release_after_producer_enter_{false};
+		std::atomic<bool> test_pause_writer_before_exit_{false};
+		std::atomic<bool> test_paused_writer_before_exit_{false};
+		std::atomic<bool> test_release_writer_before_exit_{false};
+		std::atomic<std::size_t> test_control_queue_reset_count_{0};
+		std::condition_variable test_cv_;
+	#endif
 };
 
 } // namespace obs_native_ipc
