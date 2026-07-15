@@ -11,12 +11,22 @@
 #include <thread>
 #include <vector>
 
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
 
 namespace {
+
+#if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
+constexpr bool kThreadSanitizer = true;
+#else
+constexpr bool kThreadSanitizer = false;
+#endif
 
 void assert_true(bool cond, const char* msg)
 {
@@ -182,7 +192,8 @@ void test_alive_then_reap(const char* argv0)
 	assert_true(transport.spawn(fake_config(argv0, "eof")), "spawn eof child should pass");
 
 	bool done = false;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+	const auto deadline = std::chrono::steady_clock::now() +
+			      std::chrono::milliseconds(kThreadSanitizer ? 5000 : 500);
 	while (std::chrono::steady_clock::now() < deadline) {
 		if (!transport.alive()) {
 			done = true;
