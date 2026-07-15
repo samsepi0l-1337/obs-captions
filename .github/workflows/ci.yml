@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra local --extra obs
+
+      - name: Run pytest
+        run: uv run pytest -q
+
+  native-plugin-tests:
+    name: Native plugin tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run native IPC tests
+        run: bash native-plugin/tests/run_tests.sh
+
+  windows-exe:
+    name: Windows executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra local --extra loopback --extra obs
+
+      - name: Install PyInstaller
+        run: uv pip install "pyinstaller==6.14.1"
+
+      - name: Build executable
+        run: uv run pyinstaller --noconfirm obs_captions.spec
+
+      - name: Smoke test executable
+        run: dist/obs-captions/obs-captions.exe list-devices
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-captions-win-x64
+          path: dist/obs-captions/
+
+  windows-plugin:
+    name: Windows plugin package
+    runs-on: windows-latest
+    needs: windows-exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download executable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: obs-captions-win-x64
+          path: dist/obs-captions
+
+      - name: Try native plugin build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # To enable the full plugin build, set OBS_BUILD_DIR, OBS_STUDIO_DIR,
+          # or CMAKE_PREFIX_PATH in this job's environment.
+          ./scripts/build_plugin_windows.ps1
+
+      - name: Package Windows release layout
+        shell: pwsh
+        run: ./scripts/package_windows_release.ps1
+
+      - name: Upload Windows release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-captions-windows-x64
+          path: dist/release/obs-captions-windows-x64.zip

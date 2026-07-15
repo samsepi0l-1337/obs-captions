@@ -73,14 +73,13 @@ bool IpcBridge::wait_for_ready(std::uint32_t session_epoch)
 {
 	std::unique_lock lock(state_mutex_);
 	const bool ok = ready_cv_.wait_for(lock, config_.hello_timeout, [this, session_epoch]() {
-		return !running_.load(std::memory_order_acquire) ||
-		       restart_requested_.load(std::memory_order_acquire) ||
-		       (session_ready_.load(std::memory_order_acquire) && session_epoch_ == session_epoch) ||
-		       stop_requested_.load(std::memory_order_acquire);
+		return desired() != Desired::Run ||
+		       (session_ready_.load(std::memory_order_acquire) &&
+			session_epoch_.load(std::memory_order_acquire) == session_epoch) ||
+		       !running_.load(std::memory_order_acquire);
 	});
 	return ok && running_.load(std::memory_order_acquire) &&
-	       !stop_requested_.load(std::memory_order_acquire) &&
-	       !restart_requested_.load(std::memory_order_acquire) &&
+	       desired() == Desired::Run &&
 	       session_ready_.load(std::memory_order_acquire) &&
 	       session_epoch_.load(std::memory_order_acquire) == session_epoch;
 }
@@ -100,15 +99,19 @@ void IpcBridge::process_payload(const DecodedFrame &frame, std::uint32_t reader_
 {
 	const bool debug = std::getenv("OBS_BRIDGE_TEST_DEBUG") != nullptr;
 	if (debug) {
+		std::lock_guard lock(epoch_mutex_);
 		std::cerr << "process_payload type=" << static_cast<int>(frame.type) << " reader_epoch=" << reader_epoch
 			  << " active=" << epoch_gate_.active_epoch() << "\n";
 	}
 
-	if (!epoch_gate_.should_apply(reader_epoch)) {
-		if (debug) {
-			std::cerr << "epoch gate mismatch skip\n";
+	{
+		std::lock_guard lock(epoch_mutex_);
+		if (!epoch_gate_.should_apply(reader_epoch)) {
+			if (debug) {
+				std::cerr << "epoch gate mismatch skip\n";
+			}
+			return;
 		}
-		return;
 	}
 
 	switch (frame.type) {
@@ -137,8 +140,7 @@ void IpcBridge::process_payload(const DecodedFrame &frame, std::uint32_t reader_
 			request_restart();
 			return;
 		}
-		session_ready_.store(true, std::memory_order_release);
-		ready_cv_.notify_all();
+		set_ready_state(true);
 		return;
 	}
 	case MessageType::HEARTBEAT:
@@ -208,8 +210,11 @@ void IpcBridge::apply_caption(std::uint32_t epoch, std::uint64_t ts, std::uint64
 			      const std::string &text)
 {
 	CaptionEvent evt{epoch, seq, ts, text, is_final};
-	if (epoch_gate_.evaluate(evt) != CaptionDecision::Accept) {
-		return;
+	{
+		std::lock_guard lock(epoch_mutex_);
+		if (epoch_gate_.evaluate(evt) != CaptionDecision::Accept) {
+			return;
+		}
 	}
 
 	CaptionCallback cb;

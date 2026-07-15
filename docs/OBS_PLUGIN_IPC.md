@@ -1,6 +1,6 @@
 # OBS 플러그인 ↔ 파이썬 사이드카 IPC 프로토콜 설계
 
-하이브리드(옵션 B) 아키텍처에서 **C++ 네이티브 오디오 필터 플러그인**과 **파이썬 STT 사이드카 프로세스** 사이의 통신 규약을 정의한다. 이 문서는 설계(스펙)이며 구현은 후속 단계다.
+하이브리드(옵션 B) 아키텍처에서 **C++ 네이티브 오디오 필터 플러그인**과 **파이썬 STT 사이드카 프로세스** 사이의 통신 규약을 정의한다. 현재 트리에는 row6 필터↔bridge↔caption-output 경로가 구현되어 있으며, row7 Windows OBS SDK 빌드/로드 검증은 환경 게이트로 남아 있다.
 
 > 상위 맥락: [OBS_PLUGIN_FEASIBILITY.md](OBS_PLUGIN_FEASIBILITY.md). 플러그인 뼈대: `native-plugin/`(특히 `src/ipc-bridge.hpp`가 이 스펙의 C++ 측 구현 자리).
 
@@ -10,7 +10,7 @@
 
 - **파이썬 STT 자산 재사용**: 기존 `obs_captions` 파이프라인을 사이드카에서 돌린다. 기존 `STTBackend` ABC(`src/obs_captions/stt/base.py`)가 **이미 스트리밍 인터페이스**(`feed_audio(pcm16)`, `on_partial`/`on_final`, `start_stream`/`flush`/`stop_stream`)라, IPC 어댑터는 이 인터페이스에 거의 1:1로 결선된다(§8). C++는 오디오 캡처·텍스트 표시·프로세스 관리만.
 - **실시간 우선**: OBS 오디오 스레드는 **절대 블로킹하지 않는다**. bounded 링버퍼가 오디오 스레드와 파이프 I/O를 완전히 분리한다. 실시간 유지를 위해 **드롭은 두 개의 bounded 큐 두 지점에서만 drop-oldest로 허용**된다 — (1) C++ SPSC 링(§6.1), (2) 사이드카 인바운드 오디오 큐(§8.3). 이 둘 외 무제한 버퍼링 금지. writer가 느린 사이드카에 블로킹돼도 audio 스레드는 무관.
-- **비밀정보 격리**: API 키를 파이프로 흘리지 않는다. 사이드카가 기존 설정(TOML + env, 설정 GUI 산출물)을 `load_config`로 **직접** 로드. 플러그인은 config 경로만 넘긴다.
+- **비밀정보 격리**: API 키를 파이프로 흘리지 않는다. 사이드카가 기존 설정(TOML + env)을 `load_config`로 **직접** 로드. 플러그인은 config 경로만 넘긴다.
 - **네트워크 표면 0**: 소켓/포트 없이 **자식 프로세스 stdin/stdout** 바이너리 파이프.
 - **크로스플랫폼**: Windows/macOS/Linux. 로그는 **stderr**(§6.3 오염 방지 강제).
 
@@ -360,7 +360,7 @@ STATUS/FLUSH_DONE는 상태 제어용이라 텍스트 소스를 직접 변경하
 | 6 | 필터 결선 + 자막 apply | OBS-gated(Windows); 단 epoch 거부·quiesce 배리어 로직은 순수부로 분리 검증 | row5 | `native-plugin/src/obs-captions-filter.cpp`; 자막 apply 헬퍼는 기존 `native-plugin/src/caption-output.cpp`(§9 weak-source 경계) | `filter_audio`→(§6.4 배리어)→링→writer, reader→apply(§9). **§9 실패경로 매트릭스**: (1) 소스 present→`obs_source_update` 성공, (2) 소스명 없음→무 mutation+로그, (3) 개명/삭제→weak-source 승격 실패→자막 무시+로그, (4) 콜백 중 소스 삭제→UAF 없이 처리, (5) stale epoch→update 전 거부(순수부). **§6.4 생산자-quiesce 적대적 통합 테스트**: (6) 실제 `filter_audio`에서 (6a) 콜백이 `inflight++` 직후 검사 전 멈춘 인터리빙, (6b) 콜백이 링 enqueue 임계구역 안인 인터리빙(리샘플은 writer라 무관) 각각에서 destroy step6 진입 → 배리어가 `inflight==0` 배수까지 대기, **링 해제 후 생산자 접근 0**(잘못된 로직=UAF 검출, 올바른 로직=대기 또는 타임아웃 degraded leak). 순수 admission 로직은 row3 `quiesce_test`가 이미 커버하고, row6은 실 `filter_audio` 결선에서 재확인. **(6c) async-teardown 오구현 검출**: teardown을 별도 스레드로 dispatch하고 `filter_destroy`가 즉시 반환하도록 만든 잘못된 구현에서 종료 시 UAF(배리어 원자/링 free 후 접근)가 **검출**되어야 함(올바른 동기 구현은 무결). 결정적 스케줄 배리어. |
 | 7 | Windows 빌드/로드 | OBS-gated(Windows) | row6 + obs-plugintemplate 이식 | 이식 후 `.dll` | Tailscale SSH, `.dll`→`obs-plugins/64bit`, OBS 필터 로드 확인 |
 
-> 요약: row1·2(py)·row3(순수 C++)는 전송 결정과 무관하게 진행 가능. **row5(ipc-bridge 결선)부터는 row4 TRANSPORT_DECISION.md가 하드 전제** — 그 전엔 ipc-bridge 파일을 만들지 않는다. row6·7은 OBS/Windows에서만 검증.
+> 상태: row6은 현재 트리에 구현되어 있다(`obs-captions-filter` ↔ `ipc-bridge` ↔ `caption-output`). row7은 Windows OBS SDK/libobs가 있는 환경에서 `scripts/build_plugin_windows.ps1`로 DLL 빌드와 OBS 로드 검증이 필요하며, SDK가 없는 CI에서는 DLL 산출을 건너뛴다.
 
 ---
 

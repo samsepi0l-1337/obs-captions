@@ -86,6 +86,7 @@
 ### 자막 경로
 - **Path A** (브라우저 소스): FastAPI + WebSocket → `overlay.html` CSS 변수 주입, p50=0.14ms
 - **Path B** (obs-websocket): `ObsTextSink` → SetInputSettings, p50=135ms (디바운스 120ms 포함)
+- **native-plugin hybrid IPC**: `native-plugin/` C++ 오디오 필터 → Python `ipc-sidecar`(stdin/stdout IPC) → `caption-output` → OBS Text 소스. row6 구현됨, row7 Windows OBS SDK DLL 빌드/로드는 환경 게이트.
 
 ### 텍스트 처리 파이프라인 (text.py → pipeline.py)
 | Feature | 모듈 | 설정 섹션 |

@@ -41,7 +41,7 @@ azure = ["azure-cognitiveservices-speech"]
 obs-captions = "obs_captions.cli:cli"
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "pytest-cov"]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "pytest-cov", "pyinstaller==6.14.1"]
 
 [tool.hatch.build.targets.wheel]
 # The static overlay web assets live INSIDE the package

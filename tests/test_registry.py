@@ -439,11 +439,27 @@ async def test_openai_engine_uses_provider_model(monkeypatch):
 
     cfg = AppConfig(
         engine="openai",
-        providers={"openai": ProviderConfig(model="gpt-4o-transcribe")},
+        providers={"openai": ProviderConfig(model="gpt-realtime-translate", target_language="en")},
     )
     backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
     assert isinstance(backend, OpenAIRealtimeBackend)
-    assert backend.model == "gpt-4o-transcribe"  # type: ignore[attr-defined]
+    assert backend.model == "gpt-realtime-translate"  # type: ignore[attr-defined]
+    assert backend.target_language == "en"  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_openai_engine_forwards_delay(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    from obs_captions.config import AppConfig, ProviderConfig
+    from obs_captions.stt.openai_realtime import OpenAIRealtimeBackend
+
+    cfg = AppConfig(
+        engine="openai",
+        providers={"openai": ProviderConfig(model="gpt-realtime-whisper", delay="high")},
+    )
+    backend = create_backend(cfg, on_partial=_noop, on_final=_noop)
+    assert isinstance(backend, OpenAIRealtimeBackend)
+    assert backend.delay == "high"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

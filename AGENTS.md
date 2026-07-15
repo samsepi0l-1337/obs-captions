@@ -19,10 +19,10 @@
 - 오디오: **sounddevice** (PyAudio 금지). 16kHz mono float32 콜백. 단, **선택적 Windows 시스템 사운드 캡처**(`[audio] source="loopback"`)만 예외 — `pyaudiowpatch`(PyAudio 포크, `--extra loopback`)를 `audio/loopback.py` 어댑터 1곳에서 sounddevice 스타일 콜백/포맷(paFloat32→`callback(indata,...)`)으로 감싸고, MicCapture 콜백/포맷 파이프라인은 불변(네이티브 48k stereo→16k mono 다운믹스·리샘플 재사용).
 - VAD: **Silero VAD (ONNX 경로)** (webrtcvad 금지).
 - 플랫폼: **Windows 10/11**(NVIDIA CUDA 로컬 STT 가속, 1급) + **macOS Apple Silicon**(CPU) 공동 1급, Linux 동작.
-- STT(pluggable): `local` faster-whisper — `[local].device`(auto|cpu|cuda)·`compute_type`로 제어. Windows/Linux는 **CUDA**(auto→탐지/float16, 미탐지 시 CPU 폴백), macOS는 CPU int8. `device` 분기는 순수 함수 `stt/device.py:resolve_device`(CUDA 미탐지=빈 set→CPU) / `openai` Realtime(`gpt-realtime-whisper`) / `elevenlabs` Scribe v2 Realtime / `google` mode `gemini`(Gemini Live, API 키) 또는 `speech_v2`(Speech-to-Text v2 `chirp_2` gRPC 스트리밍, 서비스계정·`--extra google`, asyncio.Queue 브리지·270s 선제 재시작·client 주입). 내부 정규화 16kHz PCM16(OpenAI 어댑터만 24kHz 업샘플).
+- STT(pluggable): `local` faster-whisper — `[local].device`(auto|cpu|cuda)·`compute_type`로 제어. Windows/Linux는 **CUDA**(auto→탐지/float16, 미탐지 시 CPU 폴백), macOS는 CPU int8. `device` 분기는 순수 함수 `stt/device.py:resolve_device`(CUDA 미탐지=빈 set→CPU) / `openai` Realtime(`gpt-realtime-whisper`|`gpt-realtime-translate`|`gpt-realtime-2.1`) / `elevenlabs` Scribe v2 Realtime / `google` mode `gemini`(Gemini Live, API 키) 또는 `speech_v2`(Speech-to-Text v2 `chirp_2` gRPC 스트리밍, 서비스계정·`--extra google`, asyncio.Queue 브리지·270s 선제 재시작·client 주입). 내부 정규화 16kHz PCM16(OpenAI 어댑터만 24kHz 업샘플).
 - 서버: FastAPI + uvicorn + websockets. HTTP 정적 오버레이 + `/ws`.
 - 오버레이: 정적 HTML/CSS/JS. 투명 배경, committed/partial 2-tier, diff push.
-- OBS 플러그인: C++ + obs-plugintemplate + **Qt6 QWebSocket**. 내장 `text_ft2_source`(.version=2) 소유·갱신(approach b, 직접 래스터화 금지).
+- OBS 플러그인: `native-plugin/` 하이브리드 C++ 오디오 필터 + Python `ipc-sidecar`(stdin/stdout IPC). 텍스트는 `caption-output` → OBS Text 소스로 반영. 빌드: `scripts/build_plugin_windows.ps1`(libobs 필요). CI: `.github/workflows/ci.yml`.
 - 테스트: **pytest**. 린트/포맷: **ruff**. (이 프로젝트엔 TS/JS/pnpm/vitest/playwright/bun 없음.)
 - 배포(Windows): **PyInstaller onedir** 번들 → `dist/obs-captions/obs-captions.exe`. 빌드는 Windows에서 `scripts/build_windows.{ps1,py}` → `pyinstaller obs_captions.spec`. CPU 기본·GPU 옵트인(`--extra gpu` + `.spec` GPU 블록 주석 해제). 정적 에셋 경로는 `packaging.resolve_web_dir()`(3-mode)로만 해석. 모델은 첫 실행 HuggingFace 다운로드(또는 오프라인 사전 번들). 상세는 README "Windows 배포 (PyInstaller)".
 
@@ -39,7 +39,7 @@
 - `src/obs_captions/`: `cli.py`, `config.py`, `packaging.py`, `audio/{capture,devices,loopback}.py`, `vad.py`, `stt/{base,local_whisper,openai_realtime,elevenlabs_realtime}.py`, `pipeline.py`, `server/{app,hub}.py`
 - `src/obs_captions/web/overlay/`: `overlay.{html,css,js}` (패키지 내부 — pip 휠·PyInstaller 번들에 함께 실림. 경로는 `packaging.resolve_web_dir()`가 해석: dev/installed=`__file__` 기준, frozen=`sys._MEIPASS/obs_captions/web`. **CWD 상대경로 금지**).
 - `obs_captions.spec` / `scripts/build_windows.{ps1,py}`: PyInstaller onedir 빌드(Windows). `.spec` `datas`의 `obs_captions/web` 목적지는 `resolve_web_dir()` frozen 경로와 **반드시 일치**.
-- `obs-plugin/`: `buildspec.json`, `CMakeLists.txt`, `CMakePresets.json`, `src/{plugin-main,caption-source,caption-ws-client}.cpp`
+- `native-plugin/`: `buildspec.json`, `CMakeLists.txt`, `src/{plugin-main,obs-captions-filter,ipc-bridge,caption-output}.cpp`
 - `tests/`: `test_{pipeline,stt_base,config,server,packaging}.py`
 - `scripts/audio_check.py`
 

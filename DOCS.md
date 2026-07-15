@@ -79,6 +79,7 @@ uv pip install -e ".[local,gpu,openai,elevenlabs,google,obs,loopback,azure]"
 ```
 
 설정 파일 준비:
+
 ```bash
 cp config.example.toml config.toml
 cp .env.example .env
@@ -92,48 +93,60 @@ cp .env.example .env
 진입점: `obs-captions` (또는 `uv run obs-captions`)
 
 ### `list-devices`
+
 ```bash
 obs-captions list-devices
 ```
+
 마이크 입력 장치 목록 출력 (인덱스, 이름, 최대 채널 수).  
 `config.toml`의 `[audio] device` 값으로 쓸 이름/인덱스 확인용.
 
 ### `list-loopback-devices`
+
 ```bash
 obs-captions list-loopback-devices
 ```
+
 Windows WASAPI 루프백 장치 목록. `--extra loopback` 설치 필요.
 
 ### `config`
+
 ```bash
 obs-captions config [--config PATH]
 ```
+
 현재 적용 설정을 출력. API 키는 `***`으로 마스킹.
 
 ### `serve`
+
 ```bash
 obs-captions serve [--config PATH] [--demo]
 ```
+
 오버레이 서버만 실행 (STT 없음).  
 `--demo`: 가짜 한국어 자막으로 UI 테스트.  
 OBS에서 Browser Source URL: `http://127.0.0.1:8765/overlay`
 
 ### `run`
+
 ```bash
 obs-captions run [--config PATH] [--sink browser|obs|both]
 ```
+
 전체 파이프라인 실행.
 
-| `--sink` | 동작 |
-|----------|------|
-| `browser` (기본) | Path A — 웹서버 + HTML 오버레이 |
-| `obs` | Path B — obs-websocket Text 소스 |
-| `both` | 양쪽 동시 |
+| `--sink`         | 동작                             |
+| ---------------- | -------------------------------- |
+| `browser` (기본) | Path A — 웹서버 + HTML 오버레이  |
+| `obs`            | Path B — obs-websocket Text 소스 |
+| `both`           | 양쪽 동시                        |
 
 ### `check-engine`
+
 ```bash
 obs-captions check-engine ENGINE [--wav PATH] [--seconds N] [--language CODE] [--config PATH]
 ```
+
 STT 엔진 연결·인증 스모크 테스트.
 
 ```bash
@@ -182,27 +195,27 @@ Browser Source URL: `http://<host>:<port>/overlay`
 
 ### `[overlay]` — 자막 스타일
 
-| 키 | 기본값 | 설명 |
-|----|--------|------|
-| `font_family` | `"Pretendard, 'Noto Sans KR', sans-serif"` | 폰트 (CSS font-family) |
-| `font_size` | `48` | px |
-| `font_weight` | `700` | 100~900 |
-| `color` | `"#ffffff"` | 확정 자막 색 |
-| `partial_color` | `"#aaaaaa"` | 진행 중 자막 색 |
-| `background` | `"rgba(0,0,0,0.35)"` | 박스 배경 (투명도 가능) |
-| `outline_width` | `2` | 텍스트 외곽선 px |
-| `outline_color` | `"#000000"` | 외곽선 색 |
-| `shadow` | `"0 2px 6px rgba(0,0,0,0.6)"` | CSS text-shadow |
-| `position` | `"bottom"` | `top` \| `middle` \| `bottom` |
-| `align` | `"center"` | `left` \| `center` \| `right` |
-| `max_lines` | `3` | 화면에 동시 표시할 최대 줄 수 |
-| `line_height` | `1.3` | CSS line-height |
-| `padding` | `24` | px |
-| `letter_spacing` | `0` | CSS letter-spacing (em) |
-| `fade_ms` | `200` | 자막 등장 fade-in 시간 |
-| `uppercase` | `false` | 대문자 강제 변환 |
-| `custom_css` | `""` | 외부 CSS 파일 경로 (추가 오버라이드) |
-| `max_chars_per_line` | `0` | `0`=비활성 \| N>0 → N 글자(codepoint) 초과 시 줄바꿈 |
+| 키                   | 기본값                                     | 설명                                                 |
+| -------------------- | ------------------------------------------ | ---------------------------------------------------- |
+| `font_family`        | `"Pretendard, 'Noto Sans KR', sans-serif"` | 폰트 (CSS font-family)                               |
+| `font_size`          | `48`                                       | px                                                   |
+| `font_weight`        | `700`                                      | 100~900                                              |
+| `color`              | `"#ffffff"`                                | 확정 자막 색                                         |
+| `partial_color`      | `"#aaaaaa"`                                | 진행 중 자막 색                                      |
+| `background`         | `"rgba(0,0,0,0.35)"`                       | 박스 배경 (투명도 가능)                              |
+| `outline_width`      | `2`                                        | 텍스트 외곽선 px                                     |
+| `outline_color`      | `"#000000"`                                | 외곽선 색                                            |
+| `shadow`             | `"0 2px 6px rgba(0,0,0,0.6)"`              | CSS text-shadow                                      |
+| `position`           | `"bottom"`                                 | `top` \| `middle` \| `bottom`                        |
+| `align`              | `"center"`                                 | `left` \| `center` \| `right`                        |
+| `max_lines`          | `3`                                        | 화면에 동시 표시할 최대 줄 수                        |
+| `line_height`        | `1.3`                                      | CSS line-height                                      |
+| `padding`            | `24`                                       | px                                                   |
+| `letter_spacing`     | `0`                                        | CSS letter-spacing (em)                              |
+| `fade_ms`            | `200`                                      | 자막 등장 fade-in 시간                               |
+| `uppercase`          | `false`                                    | 대문자 강제 변환                                     |
+| `custom_css`         | `""`                                       | 외부 CSS 파일 경로 (추가 오버라이드)                 |
+| `max_chars_per_line` | `0`                                        | `0`=비활성 \| N>0 → N 글자(codepoint) 초과 시 줄바꿈 |
 
 ### `[local]` — faster-whisper
 
@@ -230,7 +243,10 @@ model = "openai/whisper-large-v3-turbo"
 model = "openai/whisper"
 
 [providers.openai]
+# gpt-realtime-whisper | gpt-realtime-translate | gpt-realtime-2.1
 model = "gpt-realtime-whisper"
+# delay = "low"              # whisper: minimal|low|medium|high|xhigh
+# target_language = "en"     # translate: output language
 
 [providers.elevenlabs]
 model = "scribe_v2_realtime"
@@ -311,14 +327,14 @@ format = "srt"                  # txt | srt | vtt
 
 ### 5.1 로컬 — `local`
 
-| 항목 | 값 |
-|------|-----|
-| 라이브러리 | faster-whisper (CTranslate2) |
+| 항목          | 값                                     |
+| ------------- | -------------------------------------- |
+| 라이브러리    | faster-whisper (CTranslate2)           |
 | 스트리밍 방식 | LocalAgreement-2 rolling window 재전사 |
-| 부분 자막 | O (partial_interval_ms 주기) |
-| CUDA | O (자동 탐지, Windows/Linux) |
-| extra | `local` (+ `gpu` for CUDA) |
-| 환경 변수 | 없음 |
+| 부분 자막     | O (partial_interval_ms 주기)           |
+| CUDA          | O (자동 탐지, Windows/Linux)           |
+| extra         | `local` (+ `gpu` for CUDA)             |
+| 환경 변수     | 없음                                   |
 
 **LocalAgreement-2**: 같은 위치의 토큰이 2번 연속 동일하면 확정(final). rolling window가 max_buffer_s를 넘으면 앞부분 트림 + rebase.
 
@@ -326,23 +342,25 @@ format = "srt"                  # txt | srt | vtt
 
 ### 5.2 실시간 스트리밍 백엔드 (StreamingBackend)
 
-공통 구현: `stt/streaming.py`  
-- WebSocket 연결 → 오디오 base64 인코딩 전송 → partial/final 이벤트 파싱  
-- 재연결: 지수백오프 (base=0.5s, max=8s, max_reconnects=5)  
+공통 구현: `stt/streaming.py`
+
+- WebSocket 연결 → 오디오 base64 인코딩 전송 → partial/final 이벤트 파싱
+- 재연결: 지수백오프 (base=0.5s, max=8s, max_reconnects=5)
 - `is_delta=True` 이벤트: 내부에서 축적 후 완성 텍스트 전달
 
-| 엔진 | extra | 환경 변수 | 부분 자막 | 오디오 |
-|------|-------|-----------|-----------|--------|
-| `openai` | `openai` | `OPENAI_API_KEY` | O | 24kHz PCM16 |
-| `elevenlabs` | `elevenlabs` | `ELEVENLABS_API_KEY` | O | 16kHz PCM16 |
-| `google` (gemini) | — | `GOOGLE_API_KEY` | O | 16kHz PCM16 |
-| `google` (speech_v2) | `google` | GCP 서비스 계정 JSON | O | 16kHz PCM16 |
-| `xai` | — | `XAI_API_KEY` | O | 16kHz PCM16 |
-| `assemblyai` | — | `ASSEMBLYAI_API_KEY` | O | 16kHz PCM16 |
-| `deepgram` | — | `DEEPGRAM_API_KEY` | O | 16kHz PCM16 |
-| `azure` | `azure` | `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` | O | SDK 내부 |
+| 엔진                 | extra        | 환경 변수                                  | 부분 자막 | 오디오                                                        |
+| -------------------- | ------------ | ------------------------------------------ | --------- | ------------------------------------------------------------- |
+| `openai`             | `openai`     | `OPENAI_API_KEY`                           | O         | 24kHz PCM16; model=`gpt-realtime-whisper`\|`translate`\|`2.1` |
+| `elevenlabs`         | `elevenlabs` | `ELEVENLABS_API_KEY`                       | O         | 16kHz PCM16                                                   |
+| `google` (gemini)    | —            | `GOOGLE_API_KEY`                           | O         | 16kHz PCM16                                                   |
+| `google` (speech_v2) | `google`     | GCP 서비스 계정 JSON                       | O         | 16kHz PCM16                                                   |
+| `xai`                | —            | `XAI_API_KEY`                              | O         | 16kHz PCM16                                                   |
+| `assemblyai`         | —            | `ASSEMBLYAI_API_KEY`                       | O         | 16kHz PCM16                                                   |
+| `deepgram`           | —            | `DEEPGRAM_API_KEY`                         | O         | 16kHz PCM16                                                   |
+| `azure`              | `azure`      | `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` | O         | SDK 내부                                                      |
 
 **Google Speech-to-Text v2 추가 설정**:
+
 ```toml
 [providers.google]
 mode = "speech_v2"
@@ -350,6 +368,7 @@ model = "chirp_2"
 location = "us-central1"
 project_id = "my-gcp-project"
 ```
+
 서비스 계정 JSON 경로: `GOOGLE_APPLICATION_CREDENTIALS` 환경 변수.
 
 ---
@@ -359,11 +378,11 @@ project_id = "my-gcp-project"
 공통 구현: `stt/utterance.py`  
 VAD가 발화 종료를 감지하면 flush() 호출 → 버퍼 전체를 HTTP POST → 최종 자막만 출력 (부분 자막 없음).
 
-| 엔진 | extra | 환경 변수 | 특이사항 |
-|------|-------|-----------|----------|
-| `openrouter` | — | `OPENROUTER_API_KEY` | OpenAI-호환 엔드포인트 |
-| `replicate` | — | `REPLICATE_API_TOKEN` | 콜드스타트 지연 가능 |
-| `groq` | — | `GROQ_API_KEY` | whisper-large-v3-turbo, 빠른 응답 |
+| 엔진         | extra | 환경 변수             | 특이사항                          |
+| ------------ | ----- | --------------------- | --------------------------------- |
+| `openrouter` | —     | `OPENROUTER_API_KEY`  | OpenAI-호환 엔드포인트            |
+| `replicate`  | —     | `REPLICATE_API_TOKEN` | 콜드스타트 지연 가능              |
+| `groq`       | —     | `GROQ_API_KEY`        | whisper-large-v3-turbo, 빠른 응답 |
 
 ---
 
@@ -380,6 +399,7 @@ channels = 1
 ```
 
 장치 이름 확인:
+
 ```bash
 obs-captions list-devices
 ```
@@ -399,6 +419,7 @@ device = ""          # 빈값 = 기본 출력 장치의 루프백
 ```
 
 장치 이름 확인:
+
 ```bash
 obs-captions list-loopback-devices
 ```
@@ -416,6 +437,7 @@ obs-captions list-loopback-devices
 3. 서버가 WebSocket으로 자막 실시간 푸시
 
 **특징**:
+
 - 스타일: `[overlay]` 설정이 CSS 변수로 자동 주입 (재시작 없이 반영)
 - 지연: p50 = 0.14 ms
 - 커스텀 CSS: `custom_css = "my_style.css"` 로 완전 오버라이드 가능
@@ -425,6 +447,7 @@ obs-captions list-loopback-devices
 **설정**: `obs-captions run --sink obs`
 
 사전 준비:
+
 1. OBS → 도구 → obs-websocket 설정 → 활성화
 2. 비밀번호를 `.env`의 `OBS_WS_PASSWORD`에 저장
 3. `[obs] source_name`에 Text 소스 이름 지정 (없으면 자동 생성)
@@ -437,6 +460,7 @@ source_name = "LiveCaptions"
 ```
 
 **특징**:
+
 - 브라우저 소스 불필요, OBS 네이티브 Text 렌더링
 - 디바운스 120 ms (지연 p50 = 135 ms)
 - 연결 끊김 시 자동 재연결 (지수백오프 4회)
@@ -465,13 +489,13 @@ replace = "$1 원"
 regex = true
 ```
 
-| 옵션 | 설명 |
-|------|------|
-| `match` | 검색 문자열 또는 정규식 패턴 |
-| `replace` | 치환 문자열 (정규식 백레퍼런스 `\1`, `$1` 지원) |
-| `regex` | `true`: 정규식 모드 |
-| `ignore_case` | 대소문자 무시 |
-| `whole_word` | 단어 경계 매칭 |
+| 옵션          | 설명                                            |
+| ------------- | ----------------------------------------------- |
+| `match`       | 검색 문자열 또는 정규식 패턴                    |
+| `replace`     | 치환 문자열 (정규식 백레퍼런스 `\1`, `$1` 지원) |
+| `regex`       | `true`: 정규식 모드                             |
+| `ignore_case` | 대소문자 무시                                   |
+| `whole_word`  | 단어 경계 매칭                                  |
 
 ### Feature 2 — 단어 필터 (`text.py: apply_filter`)
 
@@ -541,11 +565,11 @@ clear_input = "_CaptionClear"
 
 ### 핫키 동작
 
-| 소스 | 동작 | 효과 |
-|------|------|------|
-| `_CaptionPause` Mute | 자막 일시정지 | 오디오 캡처 중지, 화면 자막 고정 |
-| `_CaptionPause` Unmute | 자막 재개 | 오디오 캡처 재시작 |
-| `_CaptionClear` Mute | 자막 초기화 | 화면 자막 즉시 지움, 자동 Unmute |
+| 소스                   | 동작          | 효과                             |
+| ---------------------- | ------------- | -------------------------------- |
+| `_CaptionPause` Mute   | 자막 일시정지 | 오디오 캡처 중지, 화면 자막 고정 |
+| `_CaptionPause` Unmute | 자막 재개     | 오디오 캡처 재시작               |
+| `_CaptionClear` Mute   | 자막 초기화   | 화면 자막 즉시 지움, 자동 Unmute |
 
 ---
 
@@ -563,11 +587,13 @@ format = "srt"           # txt | srt | vtt
 ### 포맷
 
 **TXT** — 한 줄씩 기록:
+
 ```
 안녕하세요 오늘 방송에 오신 것을 환영합니다
 ```
 
 **SRT** — SubRip 타임코드:
+
 ```
 1
 00:00:01,200 --> 00:00:03,800
@@ -575,6 +601,7 @@ format = "srt"           # txt | srt | vtt
 ```
 
 **VTT** — WebVTT:
+
 ```
 WEBVTT
 
@@ -589,7 +616,7 @@ WEBVTT
 
 ## 11. Windows 빌드 / 배포
 
-PyInstaller onedir 방식. Python 설치 불필요.
+PyInstaller 6.14.1 onedir 방식. Python 설치 불필요. Windows 빌드는 기본으로 `local` + `loopback` + `obs` extras를 포함한다.
 
 ```powershell
 # PowerShell
@@ -602,7 +629,28 @@ python scripts/build_windows.py
 결과물: `dist/obs-captions/obs-captions.exe`  
 배포 시 `dist/obs-captions/` 폴더 전체 전달.
 
+릴리스 zip:
+
+```powershell
+.\scripts\package_windows_release.ps1
+```
+
+결과물: `dist/release/obs-captions-windows-x64.zip`
+
+CI:
+
+- `.github/workflows/ci.yml`: Python 테스트, native IPC 테스트, Windows exe 빌드, release zip 생성.
+- `.github/workflows/release.yml`: GitHub Release용 Windows 패키지 워크플로.
+
+네이티브 OBS 플러그인:
+
+- `native-plugin/`에는 row6 경로가 트리에 결선되어 있다: OBS 오디오 필터 → `ipc-bridge` → Python `ipc-sidecar` → `caption-output` → OBS Text 소스.
+- Windows DLL은 OBS/libobs SDK 경로(`CMAKE_PREFIX_PATH`, `OBS_STUDIO_DIR`, `OBS_BUILD_DIR`)가 있을 때 `scripts/build_plugin_windows.ps1`로 빌드한다.
+- CI는 SDK/secret이 없는 환경에서도 Python·순수 native IPC·exe·zip 검증을 계속하며, libobs SDK가 없으면 플러그인 DLL 산출을 건너뛴다.
+- 사용자용 Windows exe 안내는 `docs/WINDOWS.md`, 네이티브 플러그인 빌드/상태는 `native-plugin/README.md` 참조.
+
 에셋 경로 해석 (`packaging.py: resolve_overlay_dir`):
+
 - **dev**: `src/obs_captions/web/overlay/`
 - **pip installed**: site-packages 내 패키지 경로
 - **frozen (PyInstaller)**: `sys._MEIPASS/obs_captions/web/`
@@ -703,4 +751,4 @@ src/obs_captions/
 
 ---
 
-*최종 갱신: 2026-06-29 — 568 tests, 커버리지 100%, main 브랜치 기준*
+_최종 갱신: 2026-06-29 — 568 tests, 커버리지 100%, main 브랜치 기준_

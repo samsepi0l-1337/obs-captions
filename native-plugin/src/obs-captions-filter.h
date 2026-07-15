@@ -2,15 +2,14 @@
 #ifndef OBS_CAPTIONS_FILTER_H
 #define OBS_CAPTIONS_FILTER_H
 
-#include <obs-module.h>
 #include <media-io/audio-resampler.h>
-#include <util/deque.h>
+#include <obs-module.h>
 
 #ifdef __cplusplus
-#include <atomic>
-#include <condition_variable>
+#include "ipc-bridge.hpp"
+
+#include <memory>
 #include <mutex>
-#include <thread>
 #include <string>
 #endif
 
@@ -28,24 +27,18 @@ void obs_captions_filter_get_defaults(obs_data_t *settings);
 obs_properties_t *obs_captions_filter_get_properties(void *data);
 struct obs_audio_data *obs_captions_filter_filter_audio(void *data, struct obs_audio_data *audio);
 
-struct obs_captions_audio_frame_info {
-	uint64_t frames;
-	uint32_t sample_rate;
-};
-
 struct obs_captions_filter_data {
 	obs_source_t *context;
 	size_t channels;
 	uint32_t sample_rate;
-	struct deque info_buffer;
-	struct deque input_buffers[OBS_CAPTIONS_MAX_CHANNELS];
-	audio_resampler_t *resampler_to_whisper;
+	uint32_t resampler_sample_rate;
+	audio_resampler_t *resampler_to_16k;
 #ifdef __cplusplus
-	std::thread worker;
-	std::mutex buf_mutex;
-	std::condition_variable cv;
-	std::atomic<bool> running;
+	std::unique_ptr<obs_native_ipc::IpcBridge> bridge;
+	std::mutex settings_mutex;
 	std::string target_text_source_name;
+	std::string config_path;
+	std::string sidecar_exe;
 #endif
 };
 
