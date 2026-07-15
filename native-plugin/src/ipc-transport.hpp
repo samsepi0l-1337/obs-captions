@@ -5,12 +5,17 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace obs_native_ipc {
 
 struct SpawnConfig {
 	std::vector<std::string> argv; // [0]=executable, remaining=args
+	// Extra (name, value) pairs injected into the child's environment (added
+	// to, not replacing, the inherited parent environment). Used to pass
+	// cloud STT API keys to the sidecar without writing them to disk.
+	std::vector<std::pair<std::string, std::string>> env;
 };
 
 class ChildTransport {

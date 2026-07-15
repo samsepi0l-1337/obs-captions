@@ -18,6 +18,7 @@ target_sources(
 		src/plugin-main.c
 		src/obs-captions-filter.c
 		src/obs-captions-filter.cpp
+		src/obs-captions-properties.cpp
 		src/caption-output.cpp
 		src/ipc-bridge.cpp
 		src/ipc-bridge-core.cpp
@@ -29,7 +30,11 @@ target_sources(
 		src/epoch_gate.cpp
 		src/out_queue.cpp
 		src/quiesce.cpp
+		src/plugin-settings.cpp
 		src/ipc-bridge.hpp
+		src/obs-captions-properties.hpp
+		src/obs-captions-setting-ids.hpp
+		src/plugin-settings.hpp
 )
 
 target_include_directories(obs-captions PRIVATE src)

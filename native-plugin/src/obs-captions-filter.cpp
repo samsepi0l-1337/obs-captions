@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "obs-captions-filter.h"
 #include "caption-output.h"
+#include "obs-captions-properties.hpp"
+#include "obs-captions-setting-ids.hpp"
+#include "plugin-settings.hpp"
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <utility>
+#include <vector>
 
 namespace {
 
-constexpr const char *SETTING_TARGET_TEXT_SOURCE = "target_text_source";
-constexpr const char *SETTING_CONFIG_PATH = "config_path";
-constexpr const char *SETTING_SIDECAR_EXE = "sidecar_exe";
+using obs_captions_settings::kApiKey;
+using obs_captions_settings::kAzureRegion;
+using obs_captions_settings::kEngine;
+using obs_captions_settings::kFilterWords;
+using obs_captions_settings::kLanguage;
+using obs_captions_settings::kLocalDevice;
+using obs_captions_settings::kLocalModelSize;
+using obs_captions_settings::kProviderModel;
+using obs_captions_settings::kSidecarExe;
+using obs_captions_settings::kSuppressBlank;
+using obs_captions_settings::kSuppressRegex;
+using obs_captions_settings::kTargetTextSource;
+
 constexpr uint32_t TARGET_SAMPLE_RATE = 16000u;
+constexpr const char *GENERATED_CONFIG_FILE = "obs-captions.generated.toml";
 
 std::string obs_data_get_string_value(obs_data_t *settings, const char *name)
 {
@@ -18,11 +36,40 @@ std::string obs_data_get_string_value(obs_data_t *settings, const char *name)
 	return value != nullptr ? value : "";
 }
 
-obs_native_ipc::IpcBridge::Config make_bridge_config(const std::string &sidecar_exe,
-						     const std::string &config_path)
+// Path OBS reserves for this module's persisted config (created if missing).
+// Freed via bfree() per obs_module_config_path()'s ownership contract.
+std::string generated_config_path()
+{
+	std::string result;
+	if (char *path = obs_module_config_path(GENERATED_CONFIG_FILE)) {
+		result = path;
+		bfree(path);
+	}
+	return result;
+}
+
+bool write_generated_config(const std::string &path, const std::string &contents)
+{
+	if (path.empty()) {
+		return false;
+	}
+	std::error_code ec;
+	std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	if (!out) {
+		blog(LOG_ERROR, "obs-captions: failed to write generated config '%s'", path.c_str());
+		return false;
+	}
+	out << contents;
+	return static_cast<bool>(out);
+}
+
+obs_native_ipc::IpcBridge::Config make_bridge_config(const std::string &sidecar_exe, const std::string &config_path,
+						     const std::vector<std::pair<std::string, std::string>> &env)
 {
 	obs_native_ipc::IpcBridge::Config cfg;
 	cfg.spawn.argv = {sidecar_exe, "ipc-sidecar", "--config", config_path};
+	cfg.spawn.env = env;
 	cfg.config_path = config_path;
 	return cfg;
 }
@@ -35,10 +82,12 @@ bool start_bridge(obs_captions_filter_data *filter)
 
 	std::string sidecar_exe;
 	std::string config_path;
+	std::vector<std::pair<std::string, std::string>> env;
 	{
 		std::lock_guard<std::mutex> lock(filter->settings_mutex);
 		sidecar_exe = filter->sidecar_exe;
 		config_path = filter->config_path;
+		env = filter->last_env;
 	}
 
 	if (sidecar_exe.empty()) {
@@ -46,7 +95,7 @@ bool start_bridge(obs_captions_filter_data *filter)
 		return false;
 	}
 
-	const bool started = filter->bridge->start(make_bridge_config(sidecar_exe, config_path));
+	const bool started = filter->bridge->start(make_bridge_config(sidecar_exe, config_path, env));
 	if (!started) {
 		blog(LOG_ERROR, "obs-captions: failed to start IPC sidecar '%s'", sidecar_exe.c_str());
 	}
@@ -198,17 +247,39 @@ void obs_captions_filter_update(void *data, obs_data_t *settings)
 		return;
 	}
 
-	const std::string target = obs_data_get_string_value(settings, SETTING_TARGET_TEXT_SOURCE);
-	const std::string config_path = obs_data_get_string_value(settings, SETTING_CONFIG_PATH);
-	const std::string sidecar_exe = obs_data_get_string_value(settings, SETTING_SIDECAR_EXE);
+	const std::string target = obs_data_get_string_value(settings, kTargetTextSource);
+	const std::string sidecar_exe = obs_data_get_string_value(settings, kSidecarExe);
+
+	obs_native_ipc::PluginSettings plugin_settings;
+	plugin_settings.engine = obs_data_get_string_value(settings, kEngine);
+	plugin_settings.language = obs_data_get_string_value(settings, kLanguage);
+	plugin_settings.local_model_size = obs_data_get_string_value(settings, kLocalModelSize);
+	plugin_settings.local_device = obs_data_get_string_value(settings, kLocalDevice);
+	plugin_settings.provider_model = obs_data_get_string_value(settings, kProviderModel);
+	plugin_settings.azure_region = obs_data_get_string_value(settings, kAzureRegion);
+	plugin_settings.target_text_source = target;
+	plugin_settings.suppress_blank = obs_data_get_bool(settings, kSuppressBlank);
+	plugin_settings.filter_words = obs_native_ipc::split_settings_lines(
+		obs_data_get_string_value(settings, kFilterWords));
+	plugin_settings.suppress_regex = obs_native_ipc::split_settings_lines(
+		obs_data_get_string_value(settings, kSuppressRegex));
+	plugin_settings.api_key = obs_data_get_string_value(settings, kApiKey);
+
+	const std::string generated_toml = obs_native_ipc::to_sidecar_toml(plugin_settings);
+	const auto env = obs_native_ipc::env_for(plugin_settings);
+	const std::string config_path = generated_config_path();
+	write_generated_config(config_path, generated_toml);
 
 	bool restart = false;
 	{
 		std::lock_guard<std::mutex> lock(filter->settings_mutex);
-		restart = filter->config_path != config_path || filter->sidecar_exe != sidecar_exe;
+		restart = filter->sidecar_exe != sidecar_exe || filter->config_path != config_path ||
+			  filter->last_generated_toml != generated_toml || filter->last_env != env;
 		filter->target_text_source_name = target;
-		filter->config_path = config_path;
 		filter->sidecar_exe = sidecar_exe;
+		filter->config_path = config_path;
+		filter->last_generated_toml = generated_toml;
+		filter->last_env = env;
 	}
 
 	if (restart) {
@@ -223,20 +294,23 @@ void obs_captions_filter_get_defaults(obs_data_t *settings)
 		return;
 	}
 
-	obs_data_set_default_string(settings, SETTING_TARGET_TEXT_SOURCE, "");
-	obs_data_set_default_string(settings, SETTING_CONFIG_PATH, "");
-	obs_data_set_default_string(settings, SETTING_SIDECAR_EXE, "");
+	obs_data_set_default_string(settings, kTargetTextSource, "");
+	obs_data_set_default_string(settings, kSidecarExe, "");
+	obs_data_set_default_string(settings, kEngine, "local");
+	obs_data_set_default_string(settings, kLanguage, "ko");
+	obs_data_set_default_string(settings, kLocalModelSize, "small");
+	obs_data_set_default_string(settings, kLocalDevice, "auto");
+	obs_data_set_default_string(settings, kProviderModel, "");
+	obs_data_set_default_string(settings, kAzureRegion, "");
+	obs_data_set_default_string(settings, kApiKey, "");
+	obs_data_set_default_bool(settings, kSuppressBlank, true);
+	obs_data_set_default_string(settings, kFilterWords, "");
+	obs_data_set_default_string(settings, kSuppressRegex, "");
 }
 
 obs_properties_t *obs_captions_filter_get_properties(void *data)
 {
-	(void)data;
-
-	obs_properties_t *props = obs_properties_create();
-	obs_properties_add_text(props, SETTING_TARGET_TEXT_SOURCE, "Target text source", OBS_TEXT_DEFAULT);
-	obs_properties_add_text(props, SETTING_CONFIG_PATH, "Config path", OBS_TEXT_DEFAULT);
-	obs_properties_add_text(props, SETTING_SIDECAR_EXE, "Sidecar executable", OBS_TEXT_DEFAULT);
-	return props;
+	return build_captions_properties(static_cast<obs_captions_filter_data *>(data));
 }
 
 struct obs_audio_data *obs_captions_filter_filter_audio(void *data, struct obs_audio_data *audio)

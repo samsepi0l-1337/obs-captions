@@ -96,6 +96,25 @@ int run_fake_child_eof()
 	return 0;
 }
 
+// Reads a var name from argv, writes its current env value (or an empty
+// string if unset) to stdout, then exits. Used to prove SpawnConfig::env
+// actually reaches the child process.
+int run_fake_child_print_env(const char* var_name)
+{
+	const char* value = var_name != nullptr ? std::getenv(var_name) : nullptr;
+	const std::string out = value != nullptr ? value : "";
+	std::size_t offset = 0;
+	while (offset < out.size()) {
+		const std::size_t written = fwrite(out.data() + offset, 1u, out.size() - offset, stdout);
+		if (written == 0) {
+			return 1;
+		}
+		offset += written;
+	}
+	fflush(stdout);
+	return 0;
+}
+
 int run_fake_child_slowloris()
 {
 	while (true) {
@@ -227,7 +246,7 @@ void test_reap_no_zombie(const char* argv0)
 #endif
 }
 
-int run_fake_child(const std::string& mode)
+int run_fake_child(const std::string& mode, const char* extra_arg)
 {
 	if (mode == "echo") {
 		return run_fake_child_echo();
@@ -241,15 +260,48 @@ int run_fake_child(const std::string& mode)
 	if (mode == "slowloris") {
 		return run_fake_child_slowloris();
 	}
+	if (mode == "print-env") {
+		return run_fake_child_print_env(extra_arg);
+	}
 	return 1;
+}
+
+void test_env_injection(const char* argv0)
+{
+	using namespace obs_native_ipc;
+	ChildTransport transport;
+	SpawnConfig cfg{
+		{std::string(argv0), "--fake-child", "print-env", "OBS_CAPTIONS_TEST_ENV"},
+		{{"OBS_CAPTIONS_TEST_ENV", "xyz"}},
+	};
+	assert_true(transport.spawn(cfg), "spawn print-env child should pass");
+
+	std::uint8_t buf[64]{};
+	std::size_t offset = 0;
+	const auto start = std::chrono::steady_clock::now();
+	std::ptrdiff_t n = 0;
+	do {
+		n = transport.read_some(buf + offset, sizeof(buf) - offset);
+		if (n > 0) {
+			offset += static_cast<std::size_t>(n);
+		}
+		assert_true(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(2000),
+			    "env injection read should be timely");
+	} while (n > 0 && offset < sizeof(buf));
+	assert_true(offset > 0, "env injection child should write a non-empty value");
+
+	const std::string observed(reinterpret_cast<const char*>(buf), offset);
+	assert_true(observed == "xyz", "injected env var should round-trip through the child");
+	assert_true(transport.reap() != -1, "env injection reap should return exit code");
 }
 
 } // namespace
 
 int main(int argc, char** argv)
 {
-	if (argc == 3 && std::strcmp(argv[1], "--fake-child") == 0) {
-		return run_fake_child(argv[2]);
+	if (argc >= 3 && std::strcmp(argv[1], "--fake-child") == 0) {
+		const char* extra_arg = argc >= 4 ? argv[3] : nullptr;
+		return run_fake_child(argv[2], extra_arg);
 	}
 
 	assert_true(argc >= 1, "argv0 should exist");
@@ -259,6 +311,7 @@ int main(int argc, char** argv)
 	test_eof_detect(argv[0]);
 	test_alive_then_reap(argv[0]);
 	test_reap_no_zombie(argv[0]);
+	test_env_injection(argv[0]);
 
 	std::cout << "ipc_transport_test: PASS" << std::endl;
 	return 0;

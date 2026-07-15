@@ -15,6 +15,7 @@ COMMON_SOURCES=(
 	"${PROJECT_ROOT}/src/ipc-bridge-core.cpp"
 	"${PROJECT_ROOT}/src/ipc-bridge-internal.cpp"
 	"${PROJECT_ROOT}/src/ipc-bridge-teardown.cpp"
+	"${PROJECT_ROOT}/src/plugin-settings.cpp"
 )
 
 TESTS=(
@@ -26,6 +27,7 @@ TESTS=(
 	"${SCRIPT_DIR}/ipc_transport_test.cpp"
 	"${SCRIPT_DIR}/ipc_bridge_test.cpp"
 	"${SCRIPT_DIR}/ipc_bridge_teardown_test.cpp"
+	"${SCRIPT_DIR}/plugin_settings_test.cpp"
 )
 
 for test_file in "${TESTS[@]}"; do
