@@ -39,7 +39,7 @@ loopback = ["pyaudiowpatch; platform_system == 'Windows'"]
 azure = ["azure-cognitiveservices-speech"]
 
 [project.scripts]
-obs-captions = "obs_captions.cli:cli"
+obs-captions = "obs_captions.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "pytest-cov", "pyinstaller==6.14.1"]
