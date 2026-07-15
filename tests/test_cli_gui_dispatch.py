@@ -1,22 +1,34 @@
 from __future__ import annotations
 
 import sys
+import types
 
 import pytest
 
 
-def test_no_args_launches_gui(monkeypatch):
-    import obs_captions.cli as cli_mod
+def _install_fake_gui(monkeypatch) -> dict:
+    """Inject a fake ``obs_captions.gui.app`` into sys.modules.
 
+    This lets ``cli.main()``'s lazy ``from obs_captions.gui.app import main``
+    resolve without importing the real module (which imports ``tkinter``, not
+    present on headless CI runners), so the dispatch logic is testable
+    everywhere.
+    """
     called: dict = {}
 
     def fake_gui_main(config_path=None):
         called["invoked"] = True
 
-    # Patch the gui.app module so cli.main()'s lazy import resolves to the fake.
-    import obs_captions.gui.app as gui_app_mod
+    fake_module = types.ModuleType("obs_captions.gui.app")
+    fake_module.main = fake_gui_main  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "obs_captions.gui.app", fake_module)
+    return called
 
-    monkeypatch.setattr(gui_app_mod, "main", fake_gui_main)
+
+def test_no_args_launches_gui(monkeypatch):
+    import obs_captions.cli as cli_mod
+
+    called = _install_fake_gui(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["obs-captions"])
 
     cli_mod.main()
@@ -27,14 +39,7 @@ def test_no_args_launches_gui(monkeypatch):
 def test_args_present_runs_cli_not_gui(monkeypatch):
     import obs_captions.cli as cli_mod
 
-    called: dict = {}
-
-    def fake_gui_main(config_path=None):
-        called["invoked"] = True
-
-    import obs_captions.gui.app as gui_app_mod
-
-    monkeypatch.setattr(gui_app_mod, "main", fake_gui_main)
+    called = _install_fake_gui(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["obs-captions", "config"])
 
     with pytest.raises(SystemExit) as exc_info:
@@ -45,17 +50,10 @@ def test_args_present_runs_cli_not_gui(monkeypatch):
     assert "invoked" not in called
 
 
-def test_help_args_run_cli_not_gui(monkeypatch, capsys):
+def test_help_args_run_cli_not_gui(monkeypatch):
     import obs_captions.cli as cli_mod
 
-    called: dict = {}
-
-    def fake_gui_main(config_path=None):
-        called["invoked"] = True
-
-    import obs_captions.gui.app as gui_app_mod
-
-    monkeypatch.setattr(gui_app_mod, "main", fake_gui_main)
+    called = _install_fake_gui(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["obs-captions", "--help"])
 
     with pytest.raises(SystemExit):
