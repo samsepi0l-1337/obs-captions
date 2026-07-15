@@ -127,6 +127,7 @@ class SidecarRuntime:
 
         self._audio_queue: deque[_QueuedAudio] = deque()
         self._audio_lock = threading.Lock()
+        self._audio_in_flight = 0
         self._dropped_inbound = 0
 
         self._out_queue: deque[bytes] = deque()
@@ -524,14 +525,16 @@ class SidecarRuntime:
                 await asyncio.sleep(0.001)
                 continue
 
-            if item.epoch != self._session_epoch:
-                continue
-
-            backend = self._backend
-            if backend is None:
-                continue
-
+            with self._audio_lock:
+                self._audio_in_flight += 1
             try:
+                if item.epoch != self._session_epoch:
+                    continue
+
+                backend = self._backend
+                if backend is None:
+                    continue
+
                 if self._offload_feed_audio:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -545,6 +548,9 @@ class SidecarRuntime:
             except Exception as exc:  # noqa: BLE001
                 self._enqueue_status(StatusCode.RUNTIME_ERROR, 0, str(exc))
                 continue
+            finally:
+                with self._audio_lock:
+                    self._audio_in_flight -= 1
 
     def _get_offload_executor(self) -> concurrent.futures.Executor:
         if self._offload_audio_executor is None:
@@ -659,7 +665,7 @@ class SidecarRuntime:
             return True
 
         with self._audio_lock:
-            if self._audio_queue:
+            if self._audio_queue or self._audio_in_flight != 0:
                 return False
 
         with self._hello_lock:
