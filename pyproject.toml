@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv",
     "click",
     "httpx",
+    "tomli-w",
 ]
 
 [project.optional-dependencies]
