@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -16,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #else
+#include <cstring>
 #include <windows.h>
 #endif
 
@@ -67,6 +69,49 @@ std::string quote_arg(const std::string& arg)
 	}
 	out.push_back('\"');
 	return out;
+}
+
+bool same_env_name(const std::string& entry, const std::string& name)
+{
+	return entry.size() > name.size() && entry[name.size()] == '=' &&
+	       _strnicmp(entry.c_str(), name.c_str(), name.size()) == 0;
+}
+
+// Builds a merged ANSI environment block (parent environment plus/overriding
+// `overrides`) suitable for CreateProcessA's lpEnvironment. Returns an empty
+// string when there is nothing to override, in which case the caller should
+// pass nullptr so the child simply inherits the parent's environment as
+// before this change.
+std::string build_env_block(const std::vector<std::pair<std::string, std::string>>& overrides)
+{
+	if (overrides.empty()) {
+		return {};
+	}
+
+	std::vector<std::string> entries;
+	if (char* base = GetEnvironmentStringsA()) {
+		for (const char* p = base; *p != '\0';) {
+			std::string entry(p);
+			p += entry.size() + 1;
+			entries.push_back(std::move(entry));
+		}
+		FreeEnvironmentStringsA(base);
+	}
+
+	for (const auto& kv : overrides) {
+		entries.erase(std::remove_if(entries.begin(), entries.end(),
+					      [&kv](const std::string& entry) { return same_env_name(entry, kv.first); }),
+			      entries.end());
+		entries.push_back(kv.first + "=" + kv.second);
+	}
+
+	std::string block;
+	for (const auto& entry : entries) {
+		block += entry;
+		block.push_back('\0');
+	}
+	block.push_back('\0');
+	return block;
 }
 #endif
 
@@ -185,6 +230,9 @@ bool ChildTransport::spawn(const SpawnConfig& cfg)
 		close_fd(in_pipe[0]);
 		close_fd(out_pipe[0]);
 		close_fd(out_pipe[1]);
+		for (const auto& kv : cfg.env) {
+			setenv(kv.first.c_str(), kv.second.c_str(), 1);
+		}
 		std::vector<char*> argv;
 		argv.reserve(cfg.argv.size() + 1u);
 		for (const auto& arg : cfg.argv) {
@@ -236,7 +284,9 @@ bool ChildTransport::spawn(const SpawnConfig& cfg)
 	si.hStdOutput = out_write;
 	si.hStdError = out_write;
 	PROCESS_INFORMATION pi{};
-	if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+	std::string env_block = build_env_block(cfg.env);
+	void* env_ptr = env_block.empty() ? nullptr : static_cast<void*>(env_block.data());
+	if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, env_ptr, nullptr, &si, &pi)) {
 		close_handle(in_read);
 		close_handle(in_write);
 		close_handle(out_read);

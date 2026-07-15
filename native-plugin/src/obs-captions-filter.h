@@ -11,6 +11,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 #endif
 
 #define OBS_CAPTIONS_MAX_CHANNELS 8
@@ -39,6 +41,12 @@ struct obs_captions_filter_data {
 	std::string target_text_source_name;
 	std::string config_path;
 	std::string sidecar_exe;
+	// Change-detection snapshot: obs_captions_filter_update() regenerates the
+	// sidecar TOML/env every call (config_path is now a fixed generated
+	// path, not a user setting), so a restart is triggered by comparing
+	// against the last landed content rather than by a path/exe diff alone.
+	std::string last_generated_toml;
+	std::vector<std::pair<std::string, std::string>> last_env;
 #endif
 };
 
