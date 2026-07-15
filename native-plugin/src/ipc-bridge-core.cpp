@@ -238,6 +238,19 @@ void IpcBridge::run_writer()
 		writer_exited_.store(true, std::memory_order_release);
 		notify_thread_exit();
 	});
+#ifdef OBS_NATIVE_IPC_TESTING
+	ScopeExit pause_before_exit([this]() {
+		if (test_pause_writer_before_exit_.load(std::memory_order_acquire)) {
+			{
+				std::lock_guard lock(state_mutex_);
+				test_paused_writer_before_exit_.store(true, std::memory_order_release);
+			}
+			test_cv_.notify_all();
+			std::unique_lock lock(state_mutex_);
+			test_cv_.wait(lock, [this]() { return test_release_writer_before_exit_.load(std::memory_order_acquire); });
+		}
+	});
+#endif
 	std::vector<std::uint8_t> payload;
 	std::vector<std::uint8_t> frame_bytes;
 
@@ -269,18 +282,6 @@ void IpcBridge::run_writer()
 			return;
 		}
 	}
-
-#ifdef OBS_NATIVE_IPC_TESTING
-	if (test_pause_writer_before_exit_.load(std::memory_order_acquire)) {
-		{
-			std::lock_guard lock(state_mutex_);
-			test_paused_writer_before_exit_.store(true, std::memory_order_release);
-		}
-		test_cv_.notify_all();
-		std::unique_lock lock(state_mutex_);
-		test_cv_.wait(lock, [this]() { return test_release_writer_before_exit_.load(std::memory_order_acquire); });
-	}
-#endif
 }
 
 void IpcBridge::run_reader()
