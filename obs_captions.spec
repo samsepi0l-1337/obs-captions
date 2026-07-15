@@ -113,7 +113,10 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,  # CLI app — keep the console window for logs / list-devices output.
+    console=False,  # Windowed GUI app — no-args launch shows the Tkinter window,
+    # not a console. CLI subcommands invoked from an existing console (cmd.exe /
+    # PowerShell) still show output via obs_captions.packaging.attach_parent_console(),
+    # called from cli.main() on Windows before dispatching to the CLI branch.
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -33,3 +33,30 @@ def resolve_web_dir() -> Path:
 def resolve_overlay_dir() -> Path:
     """Return the static overlay asset dir (``<web>/overlay``) the server mounts."""
     return resolve_web_dir() / _OVERLAY_SUBDIR
+
+
+def attach_parent_console() -> None:
+    """Reattach stdout/stderr to the launching console (Windows windowed builds only).
+
+    The GUI build sets ``console=False`` in ``obs_captions.spec``, so a frozen
+    windowed exe has no console at all and any CLI output (``run``,
+    ``list-devices``, ``check-engine``, ...) invoked from an existing
+    cmd.exe/PowerShell would otherwise go nowhere. ``AttachConsole(-1)``
+    attaches to that parent console when one exists; stdout/stderr are then
+    reopened against it. No-op on non-Windows platforms, and silently gives up
+    if no parent console is available (e.g. launched by double-click).
+    """
+    if sys.platform != "win32":
+        return
+
+    import ctypes
+
+    attach_parent_process = -1
+    if not ctypes.windll.kernel32.AttachConsole(attach_parent_process):
+        return
+
+    try:
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8")  # noqa: SIM115
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        pass

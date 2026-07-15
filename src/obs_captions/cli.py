@@ -157,5 +157,19 @@ def _overlay_dir() -> Path:  # pragma: no cover  # only called from _serve/_run 
     return app_runner._overlay_dir()
 
 
+def main() -> None:
+    """Console-script entry point: no args -> desktop GUI, args -> CLI."""
+    if len(sys.argv) == 1:
+        from obs_captions.gui.app import main as gui_main
+
+        gui_main()
+    else:
+        if sys.platform == "win32":
+            from obs_captions.packaging import attach_parent_console
+
+            attach_parent_console()
+        cli()
+
+
 if __name__ == "__main__":
-    cli()
+    main()
