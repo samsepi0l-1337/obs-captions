@@ -63,7 +63,7 @@ jobs:
         run: |
           $zip = "dist/release/obs-captions-windows-x64.zip"
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $entries = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries.FullName
+          $entries = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip).Path).Entries.FullName
           $normalized = $entries | ForEach-Object { $_ -replace '\\', '/' }
           if (-not ($normalized | Where-Object { $_ -match 'obs-plugins/64bit/obs-captions\.dll$' })) {
               throw "obs-captions.dll missing from release package"
