@@ -8,10 +8,16 @@ on:
 permissions:
   contents: write
 
+env:
+  OBS_VERSION: "31.1.1"
+  OBS_DEPS_VERSION: "2025-07-11"
+
 jobs:
   windows-release:
     name: Windows release package
-    runs-on: windows-latest
+    # Pinned to windows-2022: the OBS build uses the "Visual Studio 17 2022"
+    # generator, and the windows-latest label is migrating to VS2026.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
@@ -34,17 +40,35 @@ jobs:
       - name: Smoke test executable
         run: dist/obs-captions/obs-captions.exe list-devices
 
-      - name: Try native plugin build
+      - name: Cache OBS SDK (.deps)
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: obs-sdk-${{ runner.os }}-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}
+
+      - name: Set up OBS/libobs SDK
         shell: pwsh
-        continue-on-error: true
-        run: |
-          # To enable the full plugin build, set OBS_BUILD_DIR, OBS_STUDIO_DIR,
-          # or CMAKE_PREFIX_PATH in this job's environment.
-          ./scripts/build_plugin_windows.ps1
+        run: ./scripts/setup_obs_deps_windows.ps1
+
+      - name: Build native plugin (obs-captions.dll)
+        shell: pwsh
+        run: ./scripts/build_plugin_windows.ps1
 
       - name: Package Windows release layout
         shell: pwsh
         run: ./scripts/package_windows_release.ps1
+
+      - name: Verify plugin DLL is packaged
+        shell: pwsh
+        run: |
+          $zip = "dist/release/obs-captions-windows-x64.zip"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entries = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries.FullName
+          $normalized = $entries | ForEach-Object { $_ -replace '\\', '/' }
+          if (-not ($normalized | Where-Object { $_ -match 'obs-plugins/64bit/obs-captions\.dll$' })) {
+              throw "obs-captions.dll missing from release package"
+          }
+          Write-Host "==> obs-captions.dll present in release package"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
