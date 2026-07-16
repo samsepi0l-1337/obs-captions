@@ -81,13 +81,13 @@ def _import_fields_module_first(module: str) -> subprocess.CompletedProcess:
 def test_settings_fields_importable_first_no_circular_import():
     result = _import_fields_module_first("obs_captions.settings_fields")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "78"
+    assert result.stdout.strip() == "80"
 
 
 def test_settings_schema_importable_first_no_circular_import():
     result = _import_fields_module_first("obs_captions.settings_schema")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "78"
+    assert result.stdout.strip() == "80"
 
 
 def test_settings_types_importable_standalone():

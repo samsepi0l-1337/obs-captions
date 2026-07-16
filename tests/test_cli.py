@@ -639,6 +639,155 @@ def test_config_command_outputs_json():
 
 
 # ---------------------------------------------------------------------------
+# recommend-model command
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_model_outputs_json(monkeypatch):
+    """recommend-model prints {recommended, hardware} JSON from detected hardware."""
+    import json
+
+    import obs_captions.stt.hardware as hw_mod
+
+    fake = hw_mod.HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
+    monkeypatch.setattr(hw_mod, "detect_hardware", lambda: fake)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["recommend-model"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["recommended"] == "large-v3-turbo"
+    assert data["hardware"] == {
+        "cuda_available": True,
+        "vram_mb": 16000,
+        "ram_mb": 32000,
+        "cpu_count": 16,
+    }
+
+
+def test_recommend_model_cpu_only(monkeypatch):
+    """CPU-only host with modest RAM recommends a small model and reports no VRAM."""
+    import json
+
+    import obs_captions.stt.hardware as hw_mod
+
+    fake = hw_mod.HardwareInfo(cuda_available=False, vram_mb=None, ram_mb=4000, cpu_count=4)
+    monkeypatch.setattr(hw_mod, "detect_hardware", lambda: fake)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["recommend-model"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["recommended"] == "small"
+    assert data["hardware"]["vram_mb"] is None
+
+
+# ---------------------------------------------------------------------------
+# validate-key command
+# ---------------------------------------------------------------------------
+
+
+def test_validate_key_success_reads_key_from_env(monkeypatch):
+    """validate-key --engine openai reads OPENAI_API_KEY from env, calls
+    validate_engine, prints {ok,mode,message} JSON, and exits 0 on ok=True."""
+    import json
+
+    import obs_captions.stt.validate as validate_mod
+    from obs_captions.stt.validate import ValidationResult
+
+    captured: dict[str, object] = {}
+
+    def fake_validate_engine(engine, api_key, extra=None, **_kwargs):
+        captured["engine"] = engine
+        captured["api_key"] = api_key
+        captured["extra"] = extra
+        return ValidationResult(True, "network", "키가 정상 확인되었습니다.")
+
+    monkeypatch.setattr(validate_mod, "validate_engine", fake_validate_engine)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret-token")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["validate-key", "--engine", "openai"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data == {"ok": True, "mode": "network", "message": "키가 정상 확인되었습니다."}
+    # Key must have been read from env and passed to validate_engine...
+    assert captured["engine"] == "openai"
+    assert captured["api_key"] == "sk-super-secret-token"
+    # ...but NEVER echoed to stdout.
+    assert "sk-super-secret-token" not in result.output
+
+
+def test_validate_key_failure_exits_nonzero(monkeypatch):
+    """ok=False maps to a non-zero exit code; no key/body is leaked."""
+    import json
+
+    import obs_captions.stt.validate as validate_mod
+    from obs_captions.stt.validate import ValidationResult
+
+    def fake_validate_engine(engine, api_key, extra=None, **_kwargs):
+        return ValidationResult(False, "network", "인증 실패: 키를 확인하세요.")
+
+    monkeypatch.setattr(validate_mod, "validate_engine", fake_validate_engine)
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-secret")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["validate-key", "--engine", "deepgram"])
+
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    assert data["mode"] == "network"
+    assert "dg-secret" not in result.output
+
+
+def test_validate_key_missing_env_passes_empty_key(monkeypatch):
+    """When the engine's env var is unset, an empty string is passed (never crashes)."""
+    import obs_captions.stt.validate as validate_mod
+    from obs_captions.stt.validate import ValidationResult
+
+    captured: dict[str, object] = {}
+
+    def fake_validate_engine(engine, api_key, extra=None, **_kwargs):
+        captured["api_key"] = api_key
+        return ValidationResult(False, "format", "키가 비어 있습니다.")
+
+    monkeypatch.setattr(validate_mod, "validate_engine", fake_validate_engine)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["validate-key", "--engine", "groq"])
+
+    assert result.exit_code == 1
+    assert captured["api_key"] == ""
+
+
+def test_validate_key_azure_passes_region_extra(monkeypatch):
+    """azure forwards AZURE_SPEECH_REGION via the extra dict."""
+    import obs_captions.stt.validate as validate_mod
+    from obs_captions.stt.validate import ValidationResult
+
+    captured: dict[str, object] = {}
+
+    def fake_validate_engine(engine, api_key, extra=None, **_kwargs):
+        captured["extra"] = extra
+        return ValidationResult(False, "unsupported", "Azure 키는 자동 검증을 지원하지 않습니다.")
+
+    monkeypatch.setattr(validate_mod, "validate_engine", fake_validate_engine)
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "azure-secret")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "koreacentral")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["validate-key", "--engine", "azure"])
+
+    assert captured["extra"] == {"region": "koreacentral"}
+    assert "azure-secret" not in result.output
+
+
+# ---------------------------------------------------------------------------
 # make_capture
 # ---------------------------------------------------------------------------
 

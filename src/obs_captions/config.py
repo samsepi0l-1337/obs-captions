@@ -55,6 +55,9 @@ class LocalConfig(BaseModel):
     max_buffer_s: float = 30.0
     vad_threshold: float = 0.5
     min_silence_ms: int = 500
+    # Optional decoding hints passed straight to faster-whisper's transcribe().
+    initial_prompt: str | None = None
+    hotwords: str | None = None
 
 
 class ServerConfig(BaseModel):

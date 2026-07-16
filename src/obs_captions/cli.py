@@ -59,6 +59,51 @@ def run_command(config_path: str | None, sink: str) -> None:  # pragma: no cover
     asyncio.run(_run(config_path, sink))
 
 
+@cli.command("recommend-model")
+def recommend_model_command() -> None:
+    """Detect hardware and print the recommended local model as JSON."""
+    import obs_captions.stt.hardware as hardware
+
+    info = hardware.detect_hardware()
+    payload = {
+        "recommended": hardware.recommend_model(info),
+        "hardware": {
+            "cuda_available": info.cuda_available,
+            "vram_mb": info.vram_mb,
+            "ram_mb": info.ram_mb,
+            "cpu_count": info.cpu_count,
+        },
+    }
+    click.echo(json.dumps(payload, ensure_ascii=False))
+
+
+@cli.command("validate-key")
+@click.option("--engine", required=True, help="STT engine id to validate the API key for.")
+def validate_key_command(engine: str) -> None:
+    """Validate the API key for ENGINE and print {ok,mode,message} JSON.
+
+    The key is read from the engine's env var (never a CLI arg) so it is not
+    exposed on the command line or in the output. Exit 0 when ok, else 1.
+    """
+    import os
+
+    import obs_captions.stt.validate as validate_mod
+    from obs_captions.settings_fields import _SECRET_ENV_VARS
+
+    env_var = _SECRET_ENV_VARS.get(engine)
+    api_key = os.environ.get(env_var, "") if env_var else ""
+    extra = {"region": os.environ.get("AZURE_SPEECH_REGION", "")} if engine == "azure" else None
+
+    result = validate_mod.validate_engine(engine, api_key, extra)
+    click.echo(
+        json.dumps(
+            {"ok": result.ok, "mode": result.mode, "message": result.message},
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0 if result.ok else 1)
+
+
 @cli.command("config")
 @click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
 def config_command(config_path: str | None) -> None:

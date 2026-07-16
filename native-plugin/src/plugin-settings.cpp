@@ -96,6 +96,14 @@ std::vector<std::string> visible_field_ids(const std::string &engine)
 	return fields;
 }
 
+std::vector<std::string> advanced_field_ids()
+{
+	// local_device / azure_region are also engine-gated; the three text-
+	// processing fields are always shown w.r.t. engine. The properties glue
+	// ANDs these with engine gating (see obs-captions-properties.cpp).
+	return {"local_device", "azure_region", "suppress_blank", "filter_words", "suppress_regex"};
+}
+
 std::vector<std::pair<std::string, std::string>> env_for(const PluginSettings &settings)
 {
 	if (settings.engine == "local" || settings.api_key.empty()) {
@@ -107,6 +115,39 @@ std::vector<std::pair<std::string, std::string>> env_for(const PluginSettings &s
 		return {};
 	}
 	return {{it->second, settings.api_key}};
+}
+
+std::vector<std::string> validate_key_argv(const std::string &sidecar_exe, const std::string &engine)
+{
+	// Key is never placed here — it flows through env_for() into the child env.
+	return {sidecar_exe, "validate-key", "--engine", engine};
+}
+
+std::string parse_validate_message(const std::string &json_stdout)
+{
+	static const std::string kKey = "\"message\"";
+	const std::size_t key_pos = json_stdout.find(kKey);
+	if (key_pos != std::string::npos) {
+		const std::size_t colon = json_stdout.find(':', key_pos + kKey.size());
+		if (colon != std::string::npos) {
+			const std::size_t open = json_stdout.find('"', colon + 1);
+			if (open != std::string::npos) {
+				std::string out;
+				for (std::size_t i = open + 1; i < json_stdout.size(); ++i) {
+					const char c = json_stdout[i];
+					if (c == '\\' && i + 1 < json_stdout.size()) {
+						out.push_back(json_stdout[++i]);
+						continue;
+					}
+					if (c == '"') {
+						return out;
+					}
+					out.push_back(c);
+				}
+			}
+		}
+	}
+	return "검증 결과를 해석할 수 없습니다.";
 }
 
 std::vector<std::string> split_settings_lines(const std::string &text)

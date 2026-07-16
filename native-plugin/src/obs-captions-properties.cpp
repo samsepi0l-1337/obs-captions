@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "obs-captions-properties.hpp"
 #include "obs-captions-setting-ids.hpp"
+#include "ipc-transport.hpp"
 #include "plugin-settings.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -19,10 +21,13 @@ using obs_captions_settings::kLocalDevice;
 using obs_captions_settings::kLocalModelSize;
 using obs_captions_settings::kProviderModel;
 using obs_captions_settings::kSecretWarning;
+using obs_captions_settings::kShowAdvanced;
 using obs_captions_settings::kSidecarExe;
 using obs_captions_settings::kSuppressBlank;
 using obs_captions_settings::kSuppressRegex;
 using obs_captions_settings::kTargetTextSource;
+using obs_captions_settings::kValidateKey;
+using obs_captions_settings::kValidateStatus;
 
 // engine id -> locale key (see data/locale/en-US.ini), local + the 10 cloud
 // engines the Python sidecar's AppConfig.engine literal accepts.
@@ -76,25 +81,116 @@ bool enum_text_source_callback(void *param, obs_source_t *source)
 	return true;
 }
 
-void apply_engine_visibility(obs_properties_t *props, const std::string &engine)
+bool contains_id(const std::vector<std::string> &ids, const char *id)
 {
-	const std::vector<std::string> visible = obs_native_ipc::visible_field_ids(engine);
+	return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+bool is_engine_gated(const std::string &id)
+{
+	for (const char *field : kEngineGatedFields) {
+		if (id == field) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Visibility for each property = engine gating AND the advanced toggle. An
+// engine-hidden property stays hidden even when advanced is on; an advanced
+// property stays hidden until advanced is on. flat props only (no nested group)
+// so obs_properties_get() always resolves each id.
+void apply_visibility(obs_properties_t *props, const std::string &engine, bool show_advanced)
+{
+	const std::vector<std::string> engine_visible = obs_native_ipc::visible_field_ids(engine);
+	const std::vector<std::string> advanced = obs_native_ipc::advanced_field_ids();
+
 	for (const char *field : kEngineGatedFields) {
 		obs_property_t *prop = obs_properties_get(props, field);
 		if (!prop) {
 			continue;
 		}
-		const bool show = std::find(visible.begin(), visible.end(), field) != visible.end();
-		obs_property_set_visible(prop, show);
+		const bool engine_ok = contains_id(engine_visible, field);
+		const bool advanced_ok = !contains_id(advanced, field) || show_advanced;
+		obs_property_set_visible(prop, engine_ok && advanced_ok);
+	}
+
+	for (const std::string &field : advanced) {
+		if (is_engine_gated(field)) {
+			continue;
+		}
+		obs_property_t *prop = obs_properties_get(props, field.c_str());
+		if (!prop) {
+			continue;
+		}
+		obs_property_set_visible(prop, show_advanced);
 	}
 }
 
-bool engine_modified_callback(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+bool visibility_modified_callback(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	(void)property;
 	const char *engine = obs_data_get_string(settings, kEngine);
-	apply_engine_visibility(props, engine ? engine : "local");
+	const bool show_advanced = obs_data_get_bool(settings, kShowAdvanced);
+	apply_visibility(props, engine ? engine : "local", show_advanced);
 	return true;
+}
+
+// "Test key" button: runs the sidecar's `validate-key --engine <engine>` once,
+// injecting the currently-entered API key ONLY through the child environment
+// (never argv/logs — see validate_key_argv + env_for), and surfaces the parsed
+// message in the kValidateStatus info property and the OBS log. Libobs-gated:
+// exercised on Windows CI (this file is not built by native-plugin/tests).
+bool validate_key_clicked(obs_properties_t *props, obs_property_t *property, void *priv)
+{
+	(void)property;
+	auto *filter = static_cast<obs_captions_filter_data *>(priv);
+	if (!filter || !filter->context) {
+		return false;
+	}
+	obs_data_t *settings = obs_source_get_settings(filter->context);
+	if (!settings) {
+		return false;
+	}
+
+	obs_native_ipc::PluginSettings plugin_settings;
+	plugin_settings.engine = obs_data_get_string(settings, kEngine);
+	plugin_settings.api_key = obs_data_get_string(settings, kApiKey);
+	plugin_settings.azure_region = obs_data_get_string(settings, kAzureRegion);
+	const std::string sidecar_exe = obs_data_get_string(settings, kSidecarExe);
+	obs_data_release(settings);
+
+	std::string status;
+	if (sidecar_exe.empty()) {
+		status = "사이드카 실행 파일을 먼저 지정하세요.";
+	} else {
+		obs_native_ipc::SpawnConfig cfg;
+		cfg.argv = obs_native_ipc::validate_key_argv(sidecar_exe, plugin_settings.engine);
+		cfg.env = obs_native_ipc::env_for(plugin_settings); // API key lives ONLY here
+
+		obs_native_ipc::ChildTransport child;
+		if (!child.spawn(cfg)) {
+			status = "검증 프로세스를 시작할 수 없습니다.";
+		} else {
+			std::string out;
+			std::uint8_t buf[512];
+			for (;;) {
+				const std::ptrdiff_t n = child.read_some(buf, sizeof(buf));
+				if (n <= 0) {
+					break;
+				}
+				out.append(reinterpret_cast<const char *>(buf), static_cast<std::size_t>(n));
+			}
+			child.reap();
+			status = obs_native_ipc::parse_validate_message(out);
+		}
+	}
+
+	blog(LOG_INFO, "[obs-captions] validate-key (%s): %s", plugin_settings.engine.c_str(), status.c_str());
+	if (obs_property_t *status_prop = obs_properties_get(props, kValidateStatus)) {
+		obs_property_set_description(status_prop, status.c_str());
+	}
+	return true; // refresh so the status text updates
 }
 
 } // namespace
@@ -119,7 +215,11 @@ obs_properties_t *build_captions_properties(obs_captions_filter_data *filter)
 	for (const auto &option : kEngineOptions) {
 		obs_property_list_add_string(engine_list, obs_module_text(option.second), option.first);
 	}
-	obs_property_set_modified_callback(engine_list, engine_modified_callback);
+	obs_property_set_modified_callback(engine_list, visibility_modified_callback);
+
+	obs_property_t *show_advanced = obs_properties_add_bool(props, kShowAdvanced,
+							       obs_module_text("ShowAdvanced"));
+	obs_property_set_modified_callback(show_advanced, visibility_modified_callback);
 
 	// Local-engine-only
 	obs_property_t *model_size_list = obs_properties_add_list(props, kLocalModelSize,
@@ -139,6 +239,8 @@ obs_properties_t *build_captions_properties(obs_captions_filter_data *filter)
 	obs_properties_add_text(props, kProviderModel, obs_module_text("ProviderModel"), OBS_TEXT_DEFAULT);
 	obs_properties_add_text(props, kAzureRegion, obs_module_text("AzureRegion"), OBS_TEXT_DEFAULT);
 	obs_properties_add_text(props, kSecretWarning, obs_module_text("SecretWarning"), OBS_TEXT_INFO);
+	obs_properties_add_button2(props, kValidateKey, obs_module_text("ValidateKey"), validate_key_clicked, filter);
+	obs_properties_add_text(props, kValidateStatus, "", OBS_TEXT_INFO);
 
 	// Advanced: text processing
 	obs_properties_add_bool(props, kSuppressBlank, obs_module_text("SuppressBlank"));
@@ -146,16 +248,18 @@ obs_properties_t *build_captions_properties(obs_captions_filter_data *filter)
 	obs_properties_add_text(props, kSuppressRegex, obs_module_text("SuppressRegex"), OBS_TEXT_MULTILINE);
 
 	std::string current_engine = "local";
+	bool current_show_advanced = false;
 	if (filter && filter->context) {
 		if (obs_data_t *current_settings = obs_source_get_settings(filter->context)) {
 			const char *engine = obs_data_get_string(current_settings, kEngine);
 			if (engine && *engine) {
 				current_engine = engine;
 			}
+			current_show_advanced = obs_data_get_bool(current_settings, kShowAdvanced);
 			obs_data_release(current_settings);
 		}
 	}
-	apply_engine_visibility(props, current_engine);
+	apply_visibility(props, current_engine, current_show_advanced);
 
 	return props;
 }

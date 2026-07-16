@@ -118,6 +118,67 @@ def test_engine_visibility_toggles_provider_fields_and_keys():
         root.destroy()
 
 
+def test_advanced_toggle_hides_and_shows_advanced_fields():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        fw = registry["field_widgets"]
+        apply = registry["apply_visibility"]
+        registry["engine_widget"].set("local")
+
+        # local.vad_threshold is advanced tier (no engines) → hidden by default.
+        assert fw["local.vad_threshold"][2].widget.winfo_manager() == ""
+        # local.model_size is simple → visible.
+        assert fw["local.model_size"][2].widget.winfo_manager() == "grid"
+
+        apply(show_advanced=True)
+        assert fw["local.vad_threshold"][2].widget.winfo_manager() == "grid"
+
+        apply(show_advanced=False)
+        assert fw["local.vad_threshold"][2].widget.winfo_manager() == ""
+    finally:
+        root.destroy()
+
+
+def test_advanced_and_engine_visibility_are_anded():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        engine = registry["engine_widget"]
+        apply = registry["apply_visibility"]
+        fw = registry["field_widgets"]
+
+        # providers.openai.delay is advanced tier AND engine-gated to openai.
+        engine.set("openai")
+        apply(show_advanced=True)
+        assert fw["providers.openai.delay"][2].widget.winfo_manager() == "grid"
+
+        # Engine switches away → hidden even though advanced is on.
+        engine.set("local")
+        assert fw["providers.openai.delay"][2].widget.winfo_manager() == ""
+
+        # Engine matches but advanced off → still hidden (it's advanced).
+        engine.set("openai")
+        apply(show_advanced=False)
+        assert fw["providers.openai.delay"][2].widget.winfo_manager() == ""
+    finally:
+        root.destroy()
+
+
 def test_help_label_rendered_for_fields_with_help():
     from tkinter import ttk
 
@@ -196,6 +257,25 @@ def test_path_widget_has_browse_button(monkeypatch):
         assert pe.button is not None
         pe._browse()
         assert pe.get() == "/tmp/style.css"
+    finally:
+        root.destroy()
+
+
+def test_replacements_collector_returns_dict_list():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        collectors = sections.build_sections(nb, values, registry=registry)
+        editor = registry["field_widgets"]["text.replacements"][2]
+        editor.set([{"match": "a", "replace": "b"}])
+        collected = collectors["Text"]()
+        assert collected["text.replacements"] == [{"match": "a", "replace": "b"}]
     finally:
         root.destroy()
 
