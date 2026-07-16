@@ -38,6 +38,12 @@ std::string to_sidecar_toml(const PluginSettings &settings);
 // (+ azure_region for "azure").
 std::vector<std::string> visible_field_ids(const std::string &engine);
 
+// Property ids the plugin exposes that belong to the "advanced" (detail/tuning)
+// tier and stay hidden until the user enables the "show advanced" toggle. Only
+// ids the properties panel actually creates are returned, kept in sync with the
+// Python schema's advanced classification (settings_fields._ADVANCED_KEYS).
+std::vector<std::string> advanced_field_ids();
+
 // Maps the settings' cloud engine + api_key to the (env var, value) pair the
 // sidecar child process needs. Empty for engine=="local" or an empty key.
 std::vector<std::pair<std::string, std::string>> env_for(const PluginSettings &settings);

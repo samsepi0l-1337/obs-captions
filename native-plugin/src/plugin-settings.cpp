@@ -96,6 +96,14 @@ std::vector<std::string> visible_field_ids(const std::string &engine)
 	return fields;
 }
 
+std::vector<std::string> advanced_field_ids()
+{
+	// local_device / azure_region are also engine-gated; the three text-
+	// processing fields are always shown w.r.t. engine. The properties glue
+	// ANDs these with engine gating (see obs-captions-properties.cpp).
+	return {"local_device", "azure_region", "suppress_blank", "filter_words", "suppress_regex"};
+}
+
 std::vector<std::pair<std::string, std::string>> env_for(const PluginSettings &settings)
 {
 	if (settings.engine == "local" || settings.api_key.empty()) {

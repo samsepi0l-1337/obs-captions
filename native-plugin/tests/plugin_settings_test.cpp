@@ -92,6 +92,28 @@ int main()
 	empty_key.api_key = "";
 	assert_true(env_for(empty_key).empty(), "empty api_key should never inject env");
 
+	const auto advanced = advanced_field_ids();
+	assert_true(advanced.size() == 5u, "advanced_field_ids should expose exactly the tuning subset");
+	assert_true(has_field(advanced, "local_device"), "advanced should include local_device");
+	assert_true(has_field(advanced, "azure_region"), "advanced should include azure_region");
+	assert_true(has_field(advanced, "suppress_blank"), "advanced should include suppress_blank");
+	assert_true(has_field(advanced, "filter_words"), "advanced should include filter_words");
+	assert_true(has_field(advanced, "suppress_regex"), "advanced should include suppress_regex");
+	assert_true(!has_field(advanced, "engine"), "advanced must not include core engine");
+	assert_true(!has_field(advanced, "language"), "advanced must not include core language");
+	assert_true(!has_field(advanced, "local_model_size"), "advanced must not include core local_model_size");
+	assert_true(!has_field(advanced, "api_key"), "advanced must not include core api_key");
+	assert_true(!has_field(advanced, "provider_model"), "advanced must not include core provider_model");
+	assert_true(!has_field(advanced, "target_text_source"), "advanced must not include core target_text_source");
+	// Every advertised advanced id must be an id the plugin actually gates on
+	// engine or an always-on text field — i.e. it must be reachable as either an
+	// engine-gated field or one of the text-processing properties.
+	for (const auto &id : advanced) {
+		const bool engine_gated = id == "local_device" || id == "azure_region";
+		const bool text_field = id == "suppress_blank" || id == "filter_words" || id == "suppress_regex";
+		assert_true(engine_gated || text_field, "advanced id must map to a real plugin property");
+	}
+
 	const auto lines = split_settings_lines("  foo \r\n\nbar\n  \nbaz");
 	assert_true(lines.size() == 3u, "split_settings_lines should skip blank lines");
 	assert_true(lines[0] == "foo", "split_settings_lines should trim whitespace and CR");

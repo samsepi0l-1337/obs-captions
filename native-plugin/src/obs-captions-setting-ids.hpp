@@ -10,6 +10,7 @@ namespace obs_captions_settings {
 constexpr const char *kTargetTextSource = "target_text_source";
 constexpr const char *kSidecarExe = "sidecar_exe";
 constexpr const char *kEngine = "engine";
+constexpr const char *kShowAdvanced = "show_advanced";
 constexpr const char *kLanguage = "language";
 constexpr const char *kLocalModelSize = "local_model_size";
 constexpr const char *kLocalDevice = "local_device";

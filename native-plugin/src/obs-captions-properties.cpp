@@ -19,6 +19,7 @@ using obs_captions_settings::kLocalDevice;
 using obs_captions_settings::kLocalModelSize;
 using obs_captions_settings::kProviderModel;
 using obs_captions_settings::kSecretWarning;
+using obs_captions_settings::kShowAdvanced;
 using obs_captions_settings::kSidecarExe;
 using obs_captions_settings::kSuppressBlank;
 using obs_captions_settings::kSuppressRegex;
@@ -76,24 +77,58 @@ bool enum_text_source_callback(void *param, obs_source_t *source)
 	return true;
 }
 
-void apply_engine_visibility(obs_properties_t *props, const std::string &engine)
+bool contains_id(const std::vector<std::string> &ids, const char *id)
 {
-	const std::vector<std::string> visible = obs_native_ipc::visible_field_ids(engine);
+	return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+bool is_engine_gated(const std::string &id)
+{
+	for (const char *field : kEngineGatedFields) {
+		if (id == field) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Visibility for each property = engine gating AND the advanced toggle. An
+// engine-hidden property stays hidden even when advanced is on; an advanced
+// property stays hidden until advanced is on. flat props only (no nested group)
+// so obs_properties_get() always resolves each id.
+void apply_visibility(obs_properties_t *props, const std::string &engine, bool show_advanced)
+{
+	const std::vector<std::string> engine_visible = obs_native_ipc::visible_field_ids(engine);
+	const std::vector<std::string> advanced = obs_native_ipc::advanced_field_ids();
+
 	for (const char *field : kEngineGatedFields) {
 		obs_property_t *prop = obs_properties_get(props, field);
 		if (!prop) {
 			continue;
 		}
-		const bool show = std::find(visible.begin(), visible.end(), field) != visible.end();
-		obs_property_set_visible(prop, show);
+		const bool engine_ok = contains_id(engine_visible, field);
+		const bool advanced_ok = !contains_id(advanced, field) || show_advanced;
+		obs_property_set_visible(prop, engine_ok && advanced_ok);
+	}
+
+	for (const std::string &field : advanced) {
+		if (is_engine_gated(field)) {
+			continue;
+		}
+		obs_property_t *prop = obs_properties_get(props, field.c_str());
+		if (!prop) {
+			continue;
+		}
+		obs_property_set_visible(prop, show_advanced);
 	}
 }
 
-bool engine_modified_callback(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+bool visibility_modified_callback(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	(void)property;
 	const char *engine = obs_data_get_string(settings, kEngine);
-	apply_engine_visibility(props, engine ? engine : "local");
+	const bool show_advanced = obs_data_get_bool(settings, kShowAdvanced);
+	apply_visibility(props, engine ? engine : "local", show_advanced);
 	return true;
 }
 
@@ -119,7 +154,11 @@ obs_properties_t *build_captions_properties(obs_captions_filter_data *filter)
 	for (const auto &option : kEngineOptions) {
 		obs_property_list_add_string(engine_list, obs_module_text(option.second), option.first);
 	}
-	obs_property_set_modified_callback(engine_list, engine_modified_callback);
+	obs_property_set_modified_callback(engine_list, visibility_modified_callback);
+
+	obs_property_t *show_advanced = obs_properties_add_bool(props, kShowAdvanced,
+							       obs_module_text("ShowAdvanced"));
+	obs_property_set_modified_callback(show_advanced, visibility_modified_callback);
 
 	// Local-engine-only
 	obs_property_t *model_size_list = obs_properties_add_list(props, kLocalModelSize,
@@ -146,16 +185,18 @@ obs_properties_t *build_captions_properties(obs_captions_filter_data *filter)
 	obs_properties_add_text(props, kSuppressRegex, obs_module_text("SuppressRegex"), OBS_TEXT_MULTILINE);
 
 	std::string current_engine = "local";
+	bool current_show_advanced = false;
 	if (filter && filter->context) {
 		if (obs_data_t *current_settings = obs_source_get_settings(filter->context)) {
 			const char *engine = obs_data_get_string(current_settings, kEngine);
 			if (engine && *engine) {
 				current_engine = engine;
 			}
+			current_show_advanced = obs_data_get_bool(current_settings, kShowAdvanced);
 			obs_data_release(current_settings);
 		}
 	}
-	apply_engine_visibility(props, current_engine);
+	apply_visibility(props, current_engine, current_show_advanced);
 
 	return props;
 }
