@@ -169,6 +169,18 @@ def test_local_config_device_and_compute_type_defaults():
     assert local.compute_type is None
 
 
+def test_local_config_hint_defaults_are_none():
+    local = LocalConfig()
+    assert local.initial_prompt is None
+    assert local.hotwords is None
+
+
+def test_local_config_accepts_hints():
+    local = LocalConfig(initial_prompt="게임 방송", hotwords="닉네임")
+    assert local.initial_prompt == "게임 방송"
+    assert local.hotwords == "닉네임"
+
+
 def test_local_config_accepts_valid_device_and_compute_type():
     local = LocalConfig(device="cuda", compute_type="float16")
     assert local.device == "cuda"

@@ -29,6 +29,8 @@ class LocalWhisperBackend(STTBackend):
         cpu_threads: int = 1,
         partial_interval_ms: int = 500,
         max_buffer_s: float = 30.0,
+        initial_prompt: str | None = None,
+        hotwords: str | None = None,
         transcribe_fn: TranscribeFn | None = None,
     ) -> None:
         super().__init__(
@@ -43,6 +45,8 @@ class LocalWhisperBackend(STTBackend):
         self.cpu_threads = _bounded_cpu_threads(cpu_threads)
         self.partial_interval_ms = partial_interval_ms
         self.max_buffer_s = max_buffer_s
+        self.initial_prompt = initial_prompt
+        self.hotwords = hotwords
         # PCM16 mono => 2 bytes per sample. Rolling-window cap in bytes.
         self._max_buffer_bytes = max(1, int(max_buffer_s * sample_rate * 2))
         self._transcribe_fn = transcribe_fn
@@ -270,11 +274,17 @@ class LocalWhisperBackend(STTBackend):
         if self._model is None:
             raise RuntimeError("Whisper model is not loaded")
         audio = pcm16_to_float32(pcm16)
+        hints: dict[str, Any] = {}
+        if self.initial_prompt:
+            hints["initial_prompt"] = self.initial_prompt
+        if self.hotwords:
+            hints["hotwords"] = self.hotwords
         segments, _info = self._model.transcribe(
             audio,
             language=self.language,
             vad_filter=False,
             beam_size=1,
+            **hints,
         )
         return "".join(segment.text for segment in segments).strip()
 

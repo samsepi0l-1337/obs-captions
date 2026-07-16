@@ -44,6 +44,8 @@ def create_backend(
             cpu_threads=cfg.local.cpu_threads,
             partial_interval_ms=cfg.local.partial_interval_ms,
             max_buffer_s=cfg.local.max_buffer_s,
+            initial_prompt=cfg.local.initial_prompt,
+            hotwords=cfg.local.hotwords,
             **common,
         )
 
