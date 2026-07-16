@@ -10,9 +10,11 @@ from __future__ import annotations
 import tkinter as tk
 from dataclasses import dataclass, field
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any
+
+from pydantic import ValidationError
 
 from obs_captions.gui import config_io, sections
 from obs_captions.gui.runner import CaptionRunner
@@ -55,6 +57,9 @@ def build_app(
 ) -> AppWindow:
     """Build the main window's widgets and wire Start/Stop/Save. No mainloop."""
     root.title("obs-captions")
+    if isinstance(root, tk.Tk):
+        root.geometry("640x600")
+        root.minsize(640, 600)
 
     values = config_io.load_settings(config_path, env_path)
     notebook = ttk.Notebook(root)
@@ -71,33 +76,64 @@ def build_app(
     status_label = ttk.Label(controls, text="stopped")
     status_label.pack(side="left", padx=8)
 
-    log_widget = ScrolledText(root, height=10, state="normal")
+    log_widget = ScrolledText(root, height=10, state="disabled")
     log_widget.pack(fill="both", expand=True)
 
     active_runner = runner if runner is not None else CaptionRunner()
 
     def append_log(line: str) -> None:
         def _do_append() -> None:
+            log_widget.config(state="normal")
             log_widget.insert(tk.END, line + "\n")
             log_widget.see(tk.END)
+            log_widget.config(state="disabled")
 
         root.after(0, _do_append)
 
-    def on_save() -> None:
-        config_io.save_settings(_collect_all(collectors), config_path, env_path)
+    def _config_display() -> str:
+        return str(Path(config_path).resolve()) if config_path is not None else "메모리"
+
+    def on_save() -> bool:
+        try:
+            config_io.save_settings(_collect_all(collectors), config_path, env_path)
+        except (ValueError, OSError, ValidationError) as exc:
+            messagebox.showerror("저장 실패", str(exc))
+            return False
+        status_label.config(text=f"저장됨: {_config_display()}")
+        return True
+
+    def _on_child_exit(returncode: int) -> None:
+        def _apply() -> None:
+            status_label.config(text=f"stopped (종료 코드 {returncode})")
+            start_button.config(state="normal")
+            stop_button.config(state="disabled")
+
+        root.after(0, _apply)
 
     def on_start() -> None:
-        on_save()
+        if active_runner.is_running():
+            return
+        if not on_save():
+            return
+        try:
+            active_runner.start(sink_choice.get(), append_log, on_exit=_on_child_exit)
+        except OSError as exc:  # e.g. FileNotFoundError from Popen
+            messagebox.showerror("실행 실패", str(exc))
+            status_label.config(text="stopped")
+            return
         status_label.config(text="running")
-        active_runner.start(sink_choice.get(), append_log)
+        start_button.config(state="disabled")
+        stop_button.config(state="normal")
 
     def on_stop() -> None:
         active_runner.stop()
         status_label.config(text="stopped")
+        start_button.config(state="normal")
+        stop_button.config(state="disabled")
 
     save_button = ttk.Button(controls, text="Save", command=on_save)
     save_button.pack(side="right")
-    stop_button = ttk.Button(controls, text="Stop", command=on_stop)
+    stop_button = ttk.Button(controls, text="Stop", command=on_stop, state="disabled")
     stop_button.pack(side="right")
     start_button = ttk.Button(controls, text="Start", command=on_start)
     start_button.pack(side="right")

@@ -9,7 +9,8 @@ call site.
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from collections.abc import Callable
+from tkinter import filedialog, ttk
 from typing import Any
 
 
@@ -33,6 +34,34 @@ class SecretEntry(LabeledEntry):
     def __init__(self, parent: tk.Widget, initial: Any = "") -> None:
         super().__init__(parent, initial)
         self.widget = ttk.Entry(parent, textvariable=self.var, show="*")
+
+
+class PathEntry(LabeledEntry):
+    """A text entry paired with a "찾아보기" button that opens a file dialog.
+
+    ``dialog`` is injectable so headless tests can drive the browse flow without
+    a real Tk file dialog.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        initial: Any = "",
+        *,
+        dialog: Callable[[], str] | None = None,
+    ) -> None:
+        self.var = tk.StringVar(value="" if initial is None else str(initial))
+        self.widget = ttk.Frame(parent)
+        self.entry = ttk.Entry(self.widget, textvariable=self.var)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self._dialog = dialog or filedialog.askopenfilename
+        self.button = ttk.Button(self.widget, text="찾아보기", command=self._browse)
+        self.button.pack(side="left")
+
+    def _browse(self) -> None:
+        chosen = self._dialog()
+        if chosen:
+            self.var.set(chosen)
 
 
 class ChoiceBox:
@@ -69,4 +98,4 @@ class BoolCheck:
         self.var.set(bool(value))
 
 
-__all__ = ["LabeledEntry", "SecretEntry", "ChoiceBox", "BoolCheck"]
+__all__ = ["LabeledEntry", "SecretEntry", "PathEntry", "ChoiceBox", "BoolCheck"]
