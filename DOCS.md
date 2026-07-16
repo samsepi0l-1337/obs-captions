@@ -20,6 +20,7 @@ Python 3.12 / uv. 플랫폼 1급: Windows 10/11 (CUDA), macOS Apple Silicon (CPU
 11. [Windows 빌드 / 배포](#11-windows-빌드--배포)
 12. [환경 변수 (.env)](#12-환경-변수-env)
 13. [모듈 구조 맵](#13-모듈-구조-맵)
+14. [설정 UX (간단/고급 · 모델 추천 · 키 검증)](#14-설정-ux-간단고급--모델-추천--키-검증)
 
 ---
 
@@ -162,6 +163,53 @@ obs-captions check-engine deepgram --wav sample.wav --language en
 
 `ENGINE`: `local` | `openai` | `elevenlabs` | `google` | `xai` | `openrouter` | `replicate` | `assemblyai` | `deepgram` | `groq` | `azure`
 
+### `recommend-model`
+
+```bash
+obs-captions recommend-model
+```
+
+하드웨어(CUDA/VRAM/RAM/CPU)를 감지해 적합한 로컬 모델을 JSON으로 출력. GUI/플러그인의 "추천값 적용" 버튼과 동일한 판정 로직.
+
+```json
+{"recommended": "large-v3-turbo",
+ "hardware": {"cuda_available": true, "vram_mb": 12288, "ram_mb": 32768, "cpu_count": 16}}
+```
+
+추천 규칙 ([`stt/hardware.py`](#13-모듈-구조-맵)):
+
+| 조건                             | 추천 모델          |
+| -------------------------------- | ------------------ |
+| VRAM ≥ 8000 MB                   | `large-v3-turbo`   |
+| VRAM 4000–7999 MB / VRAM 미상+CUDA | `large-v3`         |
+| CUDA 없음 · RAM ≥ 8000 · CPU ≥ 8 | `medium`           |
+| RAM ≥ 4000                       | `small`            |
+| 그 외                            | `base`             |
+
+감지는 절대 예외를 던지지 않으며, 값을 못 구하면 `null`로 두고 보수적으로 판정한다.
+
+### `validate-key`
+
+```bash
+obs-captions validate-key --engine ENGINE
+```
+
+선택한 엔진의 API 키 유효성을 검사해 `{ok, mode, message}` JSON을 출력한다. 성공 시 exit 0, 실패 시 exit 1.  
+키는 **엔진별 환경 변수에서만 읽고 CLI 인자로 받지 않는다** — 명령줄·출력·로그에 노출되지 않는다.
+
+```bash
+DEEPGRAM_API_KEY=... obs-captions validate-key --engine deepgram
+# {"ok": true, "mode": "network", "message": "..."}
+```
+
+| `mode`        | 의미                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `network`     | 실제 인증 요청을 보내 성공/실패 확인. 지원: `openai` `deepgram` `elevenlabs` `groq` `openrouter` `xai` `replicate` `google` |
+| `format`      | 형식만 검사 (키 비어 있음, `azure` region 누락 등)                                        |
+| `unsupported` | 자동 검증 미지원 — 실행 시 확인. `assemblyai`(스트리밍 전용), `azure`(SDK 인증)          |
+
+`assemblyai`는 REST 인증 실패면(surface)이 확인되지 않아 미지원, `azure`는 SDK(subscription key + region) 인증이라 단순 `GET`으로 검증 불가하다(사유는 `stt/validate.py` 주석에 문서화).
+
 ---
 
 ## 4. 설정 레퍼런스 (config.toml)
@@ -220,7 +268,7 @@ Browser Source URL: `http://<host>:<port>/overlay`
 ### `[local]` — faster-whisper
 
 ```toml
-model_size = "small"          # tiny | base | small | medium | large-v3
+model_size = "small"          # tiny | base | small | medium | large-v3 | large-v3-turbo | distil-large-v3
 device = "auto"               # auto | cpu | cuda
 compute_type = ""             # 빈값=auto | float16 | int8_float16 | int8
 cpu_threads = 1
@@ -228,10 +276,15 @@ partial_interval_ms = 500     # 부분 자막 갱신 주기
 max_buffer_s = 30.0           # rolling window 최대 길이
 vad_threshold = 0.5
 min_silence_ms = 500
+initial_prompt = ""           # 인식 힌트 문장 (방송 주제·고유명사) — faster-whisper에 그대로 전달
+hotwords = ""                 # 강조 단어 (특정 발음/용어 인식 개선)
 ```
 
 `device = "auto"`: CUDA 탐지 후 가능하면 CUDA, 없으면 CPU graceful fallback.  
-macOS는 항상 `cpu` + `int8` (결정론적).
+macOS는 항상 `cpu` + `int8` (결정론적).  
+모델 추천은 `recommend-model` CLI([3번](#recommend-model)) 또는 GUI "추천값 적용" 버튼으로 자동 판정.
+
+**STT 인식 힌트** (`initial_prompt` / `hotwords`): 방송 주제·고유명사·자주 쓰는 용어를 넣으면 특정 발음/전문용어 인식이 개선된다. 값이 있을 때만 faster-whisper의 `transcribe()`에 전달된다 (빈값=미전달). `initial_prompt`는 문맥 힌트 문장, `hotwords`는 강조 단어 목록.
 
 ### `[providers.<engine>]` — 클라우드 옵션
 
@@ -337,6 +390,9 @@ format = "srt"                  # txt | srt | vtt
 | 환경 변수     | 없음                                   |
 
 **LocalAgreement-2**: 같은 위치의 토큰이 2번 연속 동일하면 확정(final). rolling window가 max_buffer_s를 넘으면 앞부분 트림 + rebase.
+
+**모델 크기**: `tiny`~`large-v3` 외 `large-v3-turbo`, `distil-large-v3` 지원. 하드웨어 적합 모델은 `recommend-model`([3번](#recommend-model))로 추천받는다.  
+**인식 힌트**: `[local] initial_prompt`(문맥 힌트 문장), `[local] hotwords`(강조 단어)를 채우면 방송 주제·고유명사·전문용어 인식이 개선된다 ([4번 `[local]`](#local--faster-whisper) 참조).
 
 ---
 
@@ -496,6 +552,8 @@ regex = true
 | `regex`       | `true`: 정규식 모드                             |
 | `ignore_case` | 대소문자 무시                                   |
 | `whole_word`  | 단어 경계 매칭                                  |
+
+**잘못 들리는 단어 교정(치환 에디터)**: GUI/플러그인에서 `text.replacements`를 행 추가/삭제식 UI로 편집한다 — "들리는 말 → 교정" 규칙을 TOML 직접 수정 없이 관리. 저장 시 위 `[[text.replacements]]` 배열로 직렬화된다.
 
 ### Feature 2 — 단어 필터 (`text.py: apply_filter`)
 
@@ -749,6 +807,48 @@ src/obs_captions/
     └── overlay_style.py CSS 변수 주입 (:root { --cap-* })
 ```
 
+관련 SP1 모듈:
+
+```
+src/obs_captions/
+├── settings_types.py    FieldSpec + Tier + ENGINES/LOCAL_MODEL_SIZES
+├── settings_fields.py   FIELDS 정의 + 간단/고급 tier 분류 (simple/advanced)
+└── stt/
+    ├── hardware.py      detect_hardware() + recommend_model() — 모델 추천
+    └── validate.py      validate_engine() — API 키 유효성 검증 (network/format/unsupported)
+```
+
 ---
 
-_최종 갱신: 2026-06-29 — 568 tests, 커버리지 100%, main 브랜치 기준_
+## 14. 설정 UX (간단/고급 · 모델 추천 · 키 검증)
+
+초보자가 최소 구성만으로 시작하고, 필요할 때만 세부 튜닝을 여는 흐름.
+
+### 간단/고급 설정 분리
+
+각 설정 필드는 `simple`/`advanced` 두 tier로 나뉜다(`settings_fields.py`의 `FieldSpec.tier`). GUI와 OBS 플러그인 속성에 **"고급 설정 표시" 토글**이 있고, 기본은 `simple` 필드만 보인다.
+
+- **간단(simple, 기본 표시)**: 엔진 · 언어 · 로컬 모델 크기 · 선택 엔진의 API 키/모델 · 자막 위치/크기/색(overlay position·font_size·color) · OBS 소스명(obs.source_name) · 내보내기(export enabled·format) · 인식 힌트(initial_prompt).
+- **고급(advanced, 토글 시 표시)**: device/compute_type/cpu_threads · VAD/버퍼(partial_interval_ms·max_buffer_s·vad_threshold·min_silence_ms) · 오디오(source·device·samplerate·channels) · 서버(host·port) · 오버레이 세부(font_family·weight·outline·shadow·align·max_lines·… ) · 핫키 · 텍스트 규칙(replacements·filter·suppress) 등.
+
+키 집합은 `simple_field_keys()` / `advanced_field_keys()`로 조회한다.
+
+### 로컬 모델 추천
+
+하드웨어(CUDA/VRAM/RAM/CPU)를 감지해 적합한 로컬 모델을 표시하고 "추천값 적용" 버튼으로 `local.model_size`에 반영한다. 모델 목록에 `large-v3-turbo`, `distil-large-v3`가 추가됐다. CLI는 `recommend-model`([3번](#recommend-model)), 판정 로직은 `stt/hardware.py`.
+
+### API 키 유효성 검증
+
+선택한 엔진에 실제 인증 요청을 보내 키의 성공/실패/미지원을 확인한다.
+
+- **GUI** "키 테스트" 버튼 · **OBS 플러그인** "Test API Key" 버튼 · **CLI** `validate-key --engine <e>`([3번](#validate-key)).
+- 키는 **자식 프로세스 env로만 전달**되며 config/로그에 기록하지 않는다.
+- network 검증 지원: `openai` `deepgram` `elevenlabs` `groq` `openrouter` `xai` `replicate` `google`. `assemblyai`/`azure`는 형식/미지원(`stt/validate.py` 참조).
+
+### 잘못 들리는 단어 교정
+
+`text.replacements`를 행 추가/삭제식 에디터로 편집("들리는 말 → 교정"). 상세는 [8번 Feature 1](#feature-1--텍스트-치환-textpy-apply_replacements).
+
+---
+
+_최종 갱신: 2026-07-16 — SP1 설정 UX + STT 기능(간단/고급 분리, 모델 추천, 인식 힌트, 치환 에디터, 키 검증) 반영_
