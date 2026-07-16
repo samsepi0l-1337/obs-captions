@@ -10,144 +10,46 @@ re-exports it for backward compatibility.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from obs_captions.settings_types import ENGINES, LOCAL_MODEL_SIZES, FieldSpec
 
 _GUI = frozenset({"gui"})
 _BOTH = frozenset({"gui", "plugin"})
 
 FIELDS: list[FieldSpec] = [
-    FieldSpec(
-        "engine",
-        "엔진(Engine)",
-        "choice",
-        "General",
-        _BOTH,
-        ENGINES,
-        help="음성 인식에 사용할 엔진. local은 내 컴퓨터에서, 나머지는 해당 클라우드 서비스에서 처리합니다.",
-    ),
-    FieldSpec(
-        "language",
-        "언어(Language)",
-        "text",
-        "General",
-        _BOTH,
-        help="인식할 음성의 언어 코드(예: ko, en, ja). 비우면 자동 감지합니다.",
-    ),
-    FieldSpec(
-        "audio.source",
-        "입력 소스(Source)",
-        "choice",
-        "Audio",
-        _GUI,
-        ("mic", "loopback"),
-        help="mic=마이크 입력, loopback=시스템(스피커) 소리 캡처. loopback은 Windows 전용입니다.",
-    ),
-    FieldSpec(
-        "audio.device",
-        "장치(Device)",
-        "text",
-        "Audio",
-        _GUI,
-        help="사용할 오디오 장치 이름/번호. 비우면 기본 장치를 사용합니다.",
-    ),
-    FieldSpec(
-        "audio.samplerate",
-        "샘플레이트(Sample Rate)",
-        "int",
-        "Audio",
-        _GUI,
-        help="초당 오디오 샘플 수(Hz). 보통 16000을 사용합니다.",
-    ),
-    FieldSpec(
-        "audio.channels",
-        "채널 수(Channels)",
-        "int",
-        "Audio",
-        _GUI,
-        help="오디오 채널 수. 보통 1(모노)을 사용합니다.",
-    ),
-    FieldSpec(
-        "local.model_size",
-        "모델 크기(Model Size)",
-        "choice",
-        "Local",
-        _BOTH,
-        LOCAL_MODEL_SIZES,
-        help="클수록 정확하지만 느립니다. tiny=가장 빠름, large-v3=가장 정확.",
-    ),
-    FieldSpec(
-        "local.device",
-        "연산 장치(Device)",
-        "choice",
-        "Local",
-        _BOTH,
-        ("auto", "cpu", "cuda"),
-        help="auto=자동 선택, cpu=프로세서, cuda=NVIDIA GPU 사용.",
-    ),
-    FieldSpec(
-        "local.compute_type",
-        "연산 정밀도(Compute Type)",
-        "text",
-        "Local",
-        _GUI,
-        help="연산 정밀도(예: int8, float16). 잘 모르면 비워 두세요(자동).",
-    ),
-    FieldSpec(
-        "local.cpu_threads",
-        "CPU 스레드(CPU Threads)",
-        "int",
-        "Local",
-        _GUI,
-        help="CPU 사용 시 병렬 처리 스레드 수. 0이면 자동입니다.",
-    ),
-    FieldSpec(
-        "local.partial_interval_ms",
-        "중간 자막 간격(Partial Interval, ms)",
-        "int",
-        "Local",
-        _GUI,
-        help="말하는 중 임시 자막을 갱신하는 간격(밀리초). 작을수록 반응이 빠릅니다.",
-    ),
-    FieldSpec(
-        "local.max_buffer_s",
-        "최대 버퍼(Maximum Buffer, s)",
-        "float",
-        "Local",
-        _GUI,
-        help="한 번에 모아 처리하는 오디오 최대 길이(초).",
-    ),
-    FieldSpec(
-        "local.vad_threshold",
-        "음성 감지 임계값(VAD Threshold)",
-        "float",
-        "Local",
-        _GUI,
-        help="말소리로 인정할 민감도(0~1). 높이면 작은 소리를 무시합니다.",
-    ),
-    FieldSpec(
-        "local.min_silence_ms",
-        "최소 침묵 길이(Minimum Silence, ms)",
-        "int",
-        "Local",
-        _GUI,
-        help="이만큼 조용하면 한 문장이 끝난 것으로 봅니다(밀리초).",
-    ),
-    FieldSpec(
-        "server.host",
-        "서버 호스트(Server Host)",
-        "text",
-        "Output",
-        _GUI,
-        help="자막 오버레이 웹서버가 열릴 주소. 보통 127.0.0.1.",
-    ),
-    FieldSpec(
-        "server.port",
-        "서버 포트(Server Port)",
-        "int",
-        "Output",
-        _GUI,
-        help="자막 오버레이 웹서버 포트 번호.",
-    ),
+    FieldSpec("engine", "엔진(Engine)", "choice", "General", _BOTH, ENGINES,
+              help="음성 인식에 사용할 엔진. local은 내 컴퓨터에서, 나머지는 해당 클라우드 서비스에서 처리합니다."),
+    FieldSpec("language", "언어(Language)", "text", "General", _BOTH,
+              help="인식할 음성의 언어 코드(예: ko, en, ja). 비우면 자동 감지합니다."),
+    FieldSpec("audio.source", "입력 소스(Source)", "choice", "Audio", _GUI, ("mic", "loopback"),
+              help="mic=마이크 입력, loopback=시스템(스피커) 소리 캡처. loopback은 Windows 전용입니다."),
+    FieldSpec("audio.device", "장치(Device)", "text", "Audio", _GUI,
+              help="사용할 오디오 장치 이름/번호. 비우면 기본 장치를 사용합니다."),
+    FieldSpec("audio.samplerate", "샘플레이트(Sample Rate)", "int", "Audio", _GUI,
+              help="초당 오디오 샘플 수(Hz). 보통 16000을 사용합니다."),
+    FieldSpec("audio.channels", "채널 수(Channels)", "int", "Audio", _GUI,
+              help="오디오 채널 수. 보통 1(모노)을 사용합니다."),
+    FieldSpec("local.model_size", "모델 크기(Model Size)", "choice", "Local", _BOTH, LOCAL_MODEL_SIZES,
+              help="클수록 정확하지만 느립니다. tiny=가장 빠름, large-v3=가장 정확."),
+    FieldSpec("local.device", "연산 장치(Device)", "choice", "Local", _BOTH, ("auto", "cpu", "cuda"),
+              help="auto=자동 선택, cpu=프로세서, cuda=NVIDIA GPU 사용."),
+    FieldSpec("local.compute_type", "연산 정밀도(Compute Type)", "text", "Local", _GUI,
+              help="연산 정밀도(예: int8, float16). 잘 모르면 비워 두세요(자동)."),
+    FieldSpec("local.cpu_threads", "CPU 스레드(CPU Threads)", "int", "Local", _GUI,
+              help="CPU 사용 시 병렬 처리 스레드 수. 0이면 자동입니다."),
+    FieldSpec("local.partial_interval_ms", "중간 자막 간격(Partial Interval, ms)", "int", "Local", _GUI,
+              help="말하는 중 임시 자막을 갱신하는 간격(밀리초). 작을수록 반응이 빠릅니다."),
+    FieldSpec("local.max_buffer_s", "최대 버퍼(Maximum Buffer, s)", "float", "Local", _GUI,
+              help="한 번에 모아 처리하는 오디오 최대 길이(초)."),
+    FieldSpec("local.vad_threshold", "음성 감지 임계값(VAD Threshold)", "float", "Local", _GUI,
+              help="말소리로 인정할 민감도(0~1). 높이면 작은 소리를 무시합니다."),
+    FieldSpec("local.min_silence_ms", "최소 침묵 길이(Minimum Silence, ms)", "int", "Local", _GUI,
+              help="이만큼 조용하면 한 문장이 끝난 것으로 봅니다(밀리초)."),
+    FieldSpec("server.host", "서버 호스트(Server Host)", "text", "Output", _GUI,
+              help="자막 오버레이 웹서버가 열릴 주소. 보통 127.0.0.1."),
+    FieldSpec("server.port", "서버 포트(Server Port)", "int", "Output", _GUI,
+              help="자막 오버레이 웹서버 포트 번호."),
     FieldSpec("overlay.font_family", "글꼴(Font Family)", "text", "Output", _GUI,
               help="자막에 사용할 글꼴 이름."),
     FieldSpec("overlay.font_size", "글자 크기(Font Size)", "int", "Output", _GUI,
@@ -346,4 +248,43 @@ FIELDS.append(
     )
 )
 
-__all__ = ["FIELDS"]
+# Detail/tuning fields hidden behind the GUI/plugin "show advanced" toggle
+# (design spec section A). Everything not listed stays "simple": engine,
+# language, local.model_size, provider API keys + model, overlay position/
+# font_size/color, obs.source_name, export enabled + format. Expressed as a key
+# set (not inline ``tier=`` on every FieldSpec) to keep this file compact; the
+# tier still lands on each FieldSpec instance via ``replace`` below.
+_ADVANCED_KEYS: frozenset[str] = frozenset({
+    "audio.source", "audio.device", "audio.samplerate", "audio.channels",
+    "local.device", "local.compute_type", "local.cpu_threads",
+    "local.partial_interval_ms", "local.max_buffer_s", "local.vad_threshold",
+    "local.min_silence_ms", "server.host", "server.port", "overlay.font_family",
+    "overlay.font_weight", "overlay.partial_color", "overlay.background",
+    "overlay.outline_width", "overlay.outline_color", "overlay.shadow",
+    "overlay.align", "overlay.max_lines", "overlay.line_height",
+    "overlay.padding", "overlay.letter_spacing", "overlay.fade_ms",
+    "overlay.uppercase", "overlay.custom_css", "overlay.max_chars_per_line",
+    "providers.google.mode", "providers.google.location",
+    "providers.google.project_id", "providers.azure.region",
+    "providers.openai.delay", "providers.openai.target_language",
+    "obs.host", "obs.port", "obs.obs_ws_password", "obs.hotkey.enabled",
+    "obs.hotkey.pause_input", "obs.hotkey.clear_input", "text.replacements",
+    "text.filter_words", "text.filter_mode", "text.filter_mask",
+    "text.suppress_blank", "text.suppress_regex", "text.suppress_exact",
+    "export.path",
+})
+
+FIELDS = [replace(f, tier="advanced") if f.key in _ADVANCED_KEYS else f for f in FIELDS]
+
+
+def simple_field_keys() -> set[str]:
+    """Keys of beginner-essential fields (``tier == "simple"``)."""
+    return {f.key for f in FIELDS if f.tier == "simple"}
+
+
+def advanced_field_keys() -> set[str]:
+    """Keys of detail/tuning fields (``tier == "advanced"``)."""
+    return {f.key for f in FIELDS if f.tier == "advanced"}
+
+
+__all__ = ["FIELDS", "advanced_field_keys", "simple_field_keys"]

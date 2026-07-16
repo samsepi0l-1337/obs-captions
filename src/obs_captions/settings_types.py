@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 Widget = Literal["text", "choice", "int", "float", "bool", "path", "secret", "list"]
+Tier = Literal["simple", "advanced"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,10 @@ class FieldSpec:
     field as engine-specific: when empty the field is always shown; when set the
     field is only relevant for those STT engines (used by the GUI to show/hide
     provider fields and API keys as the selected engine changes).
+
+    ``tier`` marks a field as a beginner essential (``"simple"``, the default)
+    or a detail/tuning knob (``"advanced"``); the GUI and OBS plugin hide
+    advanced fields behind a "show advanced" toggle.
     """
 
     key: str
@@ -34,6 +39,7 @@ class FieldSpec:
     env_var: str | None = None
     help: str = ""
     engines: tuple[str, ...] = ()
+    tier: Tier = "simple"
 
 
 ENGINES: tuple[str, ...] = (
@@ -51,4 +57,4 @@ ENGINES: tuple[str, ...] = (
 )
 LOCAL_MODEL_SIZES: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
 
-__all__ = ["ENGINES", "FieldSpec", "LOCAL_MODEL_SIZES", "Widget"]
+__all__ = ["ENGINES", "FieldSpec", "LOCAL_MODEL_SIZES", "Tier", "Widget"]
