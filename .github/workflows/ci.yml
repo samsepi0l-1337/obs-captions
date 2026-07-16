@@ -83,13 +83,13 @@ jobs:
           name: obs-captions-win-x64
           path: dist/obs-captions
 
-      - name: Try native plugin build
+      - name: Build native plugin (skipped without OBS SDK)
         shell: pwsh
-        continue-on-error: true
         run: |
-          # To enable the full plugin build, set OBS_BUILD_DIR, OBS_STUDIO_DIR,
-          # or CMAKE_PREFIX_PATH in this job's environment.
-          ./scripts/build_plugin_windows.ps1
+          # No libobs SDK on this runner, so -AllowSkip makes a missing SDK a
+          # clean no-op (exit 0). The Release workflow sets up the SDK and calls
+          # this script without -AllowSkip, so there a missing SDK fails hard.
+          ./scripts/build_plugin_windows.ps1 -AllowSkip
 
       - name: Package Windows release layout
         shell: pwsh

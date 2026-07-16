@@ -1,3 +1,11 @@
+[CmdletBinding()]
+param(
+    # When set, a missing OBS SDK is a clean no-op (exit 0) instead of an
+    # error. CI uses this to skip the DLL build on runners without libobs,
+    # while the release workflow omits it so a missing SDK fails hard.
+    [switch]$AllowSkip
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -15,7 +23,12 @@ if ($env:OBS_BUILD_DIR) {
 }
 
 if ($PrefixPaths.Count -eq 0) {
-    Write-Error "OBS SDK not configured. Set CMAKE_PREFIX_PATH, OBS_STUDIO_DIR, or OBS_BUILD_DIR to an OBS/libobs install or build prefix."
+    $msg = "OBS SDK not configured. Set CMAKE_PREFIX_PATH, OBS_STUDIO_DIR, or OBS_BUILD_DIR to an OBS/libobs install or build prefix."
+    if ($AllowSkip) {
+        Write-Host "==> SKIP native plugin build: $msg"
+        exit 0
+    }
+    Write-Error $msg
     exit 2
 }
 
