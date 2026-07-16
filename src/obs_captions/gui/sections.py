@@ -17,7 +17,16 @@ from tkinter import ttk
 from typing import Any
 
 from obs_captions.settings_schema import FIELDS, FieldSpec
-from obs_captions.gui.widgets import BoolCheck, ChoiceBox, LabeledEntry, PathEntry, SecretEntry
+from obs_captions.gui.widgets import (
+    BoolCheck,
+    ChoiceBox,
+    LabeledEntry,
+    PathEntry,
+    ReplacementListEditor,
+    SecretEntry,
+)
+
+_REPLACEMENTS_KEY = "text.replacements"
 
 _CONVERTERS: dict[str, Callable[[str], Any]] = {
     "int": int,
@@ -49,12 +58,16 @@ def _make_widget(parent: ttk.Frame, field: FieldSpec, initial: Any):
         return SecretEntry(parent, initial)
     if field.widget == "path":
         return PathEntry(parent, initial)
+    if field.key == _REPLACEMENTS_KEY:
+        return ReplacementListEditor(parent, initial if isinstance(initial, list) else None)
     if field.widget == "list":
         return LabeledEntry(parent, json.dumps(initial if initial not in (None, "") else []))
     return LabeledEntry(parent, initial)
 
 
 def _widget_value(field: FieldSpec, widget: Any) -> Any:
+    if field.key == _REPLACEMENTS_KEY:
+        return widget.get()
     if field.widget == "list":
         raw = widget.get()
         if not raw:

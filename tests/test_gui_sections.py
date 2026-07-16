@@ -200,6 +200,25 @@ def test_path_widget_has_browse_button(monkeypatch):
         root.destroy()
 
 
+def test_replacements_collector_returns_dict_list():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        collectors = sections.build_sections(nb, values, registry=registry)
+        editor = registry["field_widgets"]["text.replacements"][2]
+        editor.set([{"match": "a", "replace": "b"}])
+        collected = collectors["Text"]()
+        assert collected["text.replacements"] == [{"match": "a", "replace": "b"}]
+    finally:
+        root.destroy()
+
+
 def test_collect_reflects_widget_edits():
     from tkinter import ttk
 

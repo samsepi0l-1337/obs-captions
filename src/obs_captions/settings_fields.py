@@ -191,7 +191,7 @@ FIELDS.extend(
                   help="일시정지에 사용할 OBS 입력 이름."),
         FieldSpec("obs.hotkey.clear_input", "지우기 입력(Clear Input)", "text", "OBS", _GUI,
                   help="자막 지우기에 사용할 OBS 입력 이름."),
-        FieldSpec("text.replacements", "치환 규칙(Replacements)", "list", "Text", _BOTH,
+        FieldSpec("text.replacements", "잘못 들리는 단어 교정(Replacements)", "list", "Text", _BOTH,
                   help="특정 단어를 다른 단어로 바꾸는 규칙 목록(JSON)."),
         FieldSpec("text.filter_words", "필터 단어(Filtered Words)", "list", "Text", _BOTH,
                   help="가릴 단어 목록(JSON 배열)."),
