@@ -52,6 +52,21 @@ def test_build_app_has_start_stop_buttons():
         root.destroy()
 
 
+def test_advanced_checkbox_present_and_toggles(monkeypatch):
+    from obs_captions.gui.app import build_app
+
+    root = _root()
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        assert window.advanced_check is not None
+        assert "고급" in str(window.advanced_check["text"])
+        # Toggling the advanced checkbox must not raise (re-applies visibility).
+        window.advanced_check.invoke()
+        window.advanced_check.invoke()
+    finally:
+        root.destroy()
+
+
 def test_stop_button_disabled_initially():
     from obs_captions.gui.app import build_app
 

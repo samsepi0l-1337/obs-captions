@@ -88,25 +88,44 @@ def _widget_value(field: FieldSpec, widget: Any) -> Any:
         ) from exc
 
 
-def _wire_engine_visibility(
+def _make_visibility_applier(
     notebook: ttk.Notebook,
     engine_widget: ChoiceBox,
     local_frame: ttk.Frame | None,
-    conditional: list[tuple[FieldSpec, list[Any]]],
-) -> None:
-    def on_change(engine: str) -> None:
+    visibility_specs: list[tuple[FieldSpec, list[Any]]],
+) -> Callable[..., None]:
+    """Return an ``apply(engine=, show_advanced=)`` callback and wire it.
+
+    A field's row widgets are shown only when both hold: it is relevant for the
+    selected engine (``not field.engines or engine in field.engines``) AND it is
+    a beginner-essential ``simple`` field OR advanced fields are being shown.
+    The callback keeps the last engine/show_advanced so either can be updated
+    independently (engine via the widget trace, show_advanced via the GUI toggle).
+    """
+    state = {"engine": engine_widget.get(), "show_advanced": False}
+
+    def apply(engine: str | None = None, show_advanced: bool | None = None) -> None:
+        if engine is not None:
+            state["engine"] = engine
+        if show_advanced is not None:
+            state["show_advanced"] = show_advanced
+        selected = state["engine"]
+        advanced = state["show_advanced"]
         if local_frame is not None:
-            notebook.tab(local_frame, state="normal" if engine == "local" else "hidden")
-        for field, row_widgets in conditional:
-            visible = not field.engines or engine in field.engines
+            notebook.tab(local_frame, state="normal" if selected == "local" else "hidden")
+        for field, row_widgets in visibility_specs:
+            engine_ok = not field.engines or selected in field.engines
+            tier_ok = field.tier == "simple" or advanced
+            visible = engine_ok and tier_ok
             for row_widget in row_widgets:
                 if visible:
                     row_widget.grid()
                 else:
                     row_widget.grid_remove()
 
-    engine_widget.trace(on_change)
-    on_change(engine_widget.get())
+    engine_widget.trace(lambda new_engine: apply(engine=new_engine))
+    apply()
+    return apply
 
 
 def build_sections(
@@ -140,7 +159,7 @@ def build_sections(
     collectors: dict[str, Callable[[], dict[str, Any]]] = {}
     frames: dict[str, ttk.Frame] = {}
     engine_widget: ChoiceBox | None = None
-    conditional: list[tuple[FieldSpec, list[Any]]] = []
+    visibility_specs: list[tuple[FieldSpec, list[Any]]] = []
     field_widgets: dict[str, tuple[FieldSpec, ttk.Label, Any, ttk.Label | None]] = {}
 
     for section in order:
@@ -170,8 +189,7 @@ def build_sections(
 
             section_widgets.append((field, widget))
             field_widgets[key] = (field, label, widget, help_label)
-            if field.engines:
-                conditional.append((field, row_widgets))
+            visibility_specs.append((field, row_widgets))
             if field.key == "engine":
                 engine_widget = widget
 
@@ -180,12 +198,16 @@ def build_sections(
 
         collectors[section] = collect
 
+    apply_visibility: Callable[..., None] | None = None
     if engine_widget is not None:
-        _wire_engine_visibility(notebook, engine_widget, frames.get("Local"), conditional)
+        apply_visibility = _make_visibility_applier(
+            notebook, engine_widget, frames.get("Local"), visibility_specs
+        )
 
     if registry is not None:
         registry["engine_widget"] = engine_widget
         registry["field_widgets"] = field_widgets
+        registry["apply_visibility"] = apply_visibility
 
     return collectors
 

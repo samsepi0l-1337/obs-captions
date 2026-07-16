@@ -38,6 +38,7 @@ class AppWindow:
     save_button: ttk.Button
     status_label: ttk.Label
     log_widget: ScrolledText
+    advanced_check: ttk.Checkbutton | None = None
     collectors: dict[str, Any] = field(default_factory=dict)
 
 
@@ -64,10 +65,23 @@ def build_app(
     values = config_io.load_settings(config_path, env_path)
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True)
-    collectors = sections.build_sections(notebook, values)
+    registry: dict[str, Any] = {}
+    collectors = sections.build_sections(notebook, values, registry=registry)
 
     controls = ttk.Frame(root)
     controls.pack(fill="x")
+
+    show_advanced_var = tk.BooleanVar(value=False)
+
+    def _on_toggle_advanced() -> None:
+        apply_visibility = registry.get("apply_visibility")
+        if apply_visibility is not None:
+            apply_visibility(show_advanced=show_advanced_var.get())
+
+    advanced_check = ttk.Checkbutton(
+        controls, text="고급 설정 표시", variable=show_advanced_var, command=_on_toggle_advanced
+    )
+    advanced_check.pack(side="left")
 
     ttk.Label(controls, text="Sink").pack(side="left")
     sink_choice = ChoiceBox(controls, _SINK_CHOICES, "browser")
@@ -147,6 +161,7 @@ def build_app(
         save_button=save_button,
         status_label=status_label,
         log_widget=log_widget,
+        advanced_check=advanced_check,
         collectors=collectors,
     )
 
