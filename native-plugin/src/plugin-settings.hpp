@@ -48,6 +48,17 @@ std::vector<std::string> advanced_field_ids();
 // sidecar child process needs. Empty for engine=="local" or an empty key.
 std::vector<std::pair<std::string, std::string>> env_for(const PluginSettings &settings);
 
+// Builds the argv for a one-shot `<sidecar> validate-key --engine <engine>`
+// run. The API key is DELIBERATELY absent from argv — it is passed only via
+// the child environment (see env_for) so it never appears on the command line
+// or in process listings. Libobs-free so it unit-tests here.
+std::vector<std::string> validate_key_argv(const std::string &sidecar_exe, const std::string &engine);
+
+// Extracts the user-facing "message" value from the sidecar's validate-key
+// JSON stdout (`{"ok":...,"mode":"...","message":"..."}`). Returns a fallback
+// string when the field is absent/unparseable. Libobs-free, no JSON dependency.
+std::string parse_validate_message(const std::string &json_stdout);
+
 // Splits multiline OBS text-field content (filter_words / suppress_regex
 // text areas) into trimmed, non-empty lines. Libobs-free so it unit-tests
 // alongside the rest of this file.

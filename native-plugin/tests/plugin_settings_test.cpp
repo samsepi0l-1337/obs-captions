@@ -121,6 +121,36 @@ int main()
 	assert_true(lines[2] == "baz", "split_settings_lines should flush a trailing line without a newline");
 	assert_true(split_settings_lines("").empty(), "split_settings_lines on empty text should be empty");
 
+	// validate_key_argv: shape is [exe, "validate-key", "--engine", engine] and
+	// the API key must NEVER appear anywhere in argv (it flows via env only).
+	const auto vk_argv = validate_key_argv("/opt/sidecar", "openai");
+	assert_true(vk_argv.size() == 4u, "validate_key_argv should have exactly 4 elements");
+	assert_true(vk_argv[0] == "/opt/sidecar", "validate_key_argv[0] should be the sidecar exe");
+	assert_true(vk_argv[1] == "validate-key", "validate_key_argv[1] should be the subcommand");
+	assert_true(vk_argv[2] == "--engine", "validate_key_argv[2] should be --engine");
+	assert_true(vk_argv[3] == "openai", "validate_key_argv[3] should be the engine id");
+	for (const auto &arg : vk_argv) {
+		assert_true(!contains(arg, "sk-leaked-key"), "validate_key_argv must never contain the api_key");
+	}
+
+	// The key is carried only in the env pairs, matching what the callback injects.
+	PluginSettings vk_settings;
+	vk_settings.engine = "openai";
+	vk_settings.api_key = "sk-leaked-key";
+	const auto vk_env = env_for(vk_settings);
+	assert_true(vk_env.size() == 1u, "validate-key env should carry exactly one pair");
+	assert_true(vk_env[0].first == "OPENAI_API_KEY", "validate-key env var name should match engine");
+	assert_true(vk_env[0].second == "sk-leaked-key", "validate-key env value should be the api_key");
+
+	// parse_validate_message: extract the message field from sidecar JSON stdout.
+	assert_true(parse_validate_message("{\"ok\": true, \"mode\": \"network\", \"message\": \"키가 정상 확인되었습니다.\"}") ==
+			    "키가 정상 확인되었습니다.",
+		    "parse_validate_message should extract the message value");
+	assert_true(parse_validate_message("not json") == "검증 결과를 해석할 수 없습니다.",
+		    "parse_validate_message should fall back on unparseable stdout");
+	assert_true(parse_validate_message("{\"message\": \"a\\\"b\"}") == "a\"b",
+		    "parse_validate_message should unescape embedded quotes");
+
 	std::cout << "plugin_settings_test: PASS" << std::endl;
 	return 0;
 }
