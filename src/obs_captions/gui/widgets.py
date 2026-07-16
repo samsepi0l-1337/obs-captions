@@ -103,50 +103,52 @@ class ReplacementListEditor:
 
     Each row is a "들리는 말" entry paired with a "교정" entry and a delete
     button; a "행 추가" button appends a blank row. :meth:`get` returns a list
-    of ``{"match": ..., "replace": ...}`` dicts, skipping rows whose ``match``
-    is blank (regex/ignore_case/whole_word are left to ``ReplacementRule``
-    defaults, so they are not emitted here).
+    of rule dicts, skipping rows whose ``match`` is blank. Only ``match`` and
+    ``replace`` are edited here; any other keys present on the loaded rule
+    (``regex``/``ignore_case``/``whole_word``) are preserved verbatim so a
+    round-trip never silently drops them.
     """
 
     def __init__(self, parent: tk.Widget, initial: list[dict] | None = None) -> None:
         self.widget = ttk.Frame(parent)
         self._rows_frame = ttk.Frame(self.widget)
         self._rows_frame.grid(row=0, column=0, sticky="ew")
-        self._rows: list[tuple[tk.StringVar, tk.StringVar, ttk.Frame]] = []
+        self._rows: list[tuple[tk.StringVar, tk.StringVar, ttk.Frame, dict]] = []
         add_button = ttk.Button(self.widget, text="행 추가", command=self._add_row)
         add_button.grid(row=1, column=0, sticky="w")
         self.set(initial or [])
 
-    def _add_row(self, match: str = "", replace: str = "") -> None:
+    def _add_row(self, match: str = "", replace: str = "", extra: dict | None = None) -> None:
         row = ttk.Frame(self._rows_frame)
         match_var = tk.StringVar(value=str(match))
         replace_var = tk.StringVar(value=str(replace))
         ttk.Entry(row, textvariable=match_var).pack(side="left", fill="x", expand=True)
         ttk.Entry(row, textvariable=replace_var).pack(side="left", fill="x", expand=True)
-        entry = (match_var, replace_var, row)
+        entry = (match_var, replace_var, row, dict(extra or {}))
         ttk.Button(row, text="삭제", command=lambda: self._remove_row(entry)).pack(side="left")
         row.pack(fill="x")
         self._rows.append(entry)
 
-    def _remove_row(self, entry: tuple[tk.StringVar, tk.StringVar, ttk.Frame]) -> None:
+    def _remove_row(self, entry: tuple[tk.StringVar, tk.StringVar, ttk.Frame, dict]) -> None:
         entry[2].destroy()
         self._rows.remove(entry)
 
     def get(self) -> list[dict]:
         rules: list[dict] = []
-        for match_var, replace_var, _row in self._rows:
+        for match_var, replace_var, _row, extra in self._rows:
             match = match_var.get()
             if not match:
                 continue
-            rules.append({"match": match, "replace": replace_var.get()})
+            rules.append({**extra, "match": match, "replace": replace_var.get()})
         return rules
 
     def set(self, value: list[dict]) -> None:
-        for _match_var, _replace_var, row in self._rows:
+        for _match_var, _replace_var, row, _extra in self._rows:
             row.destroy()
         self._rows.clear()
         for item in value or []:
-            self._add_row(item.get("match", ""), item.get("replace", ""))
+            extra = {k: v for k, v in item.items() if k not in ("match", "replace")}
+            self._add_row(item.get("match", ""), item.get("replace", ""), extra)
 
 
 __all__ = [

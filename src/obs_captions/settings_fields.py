@@ -273,7 +273,7 @@ _ADVANCED_KEYS: frozenset[str] = frozenset({
     "providers.google.project_id", "providers.azure.region",
     "providers.openai.delay", "providers.openai.target_language",
     "obs.host", "obs.port", "obs.obs_ws_password", "obs.hotkey.enabled",
-    "obs.hotkey.pause_input", "obs.hotkey.clear_input", "text.replacements",
+    "obs.hotkey.pause_input", "obs.hotkey.clear_input",
     "text.filter_words", "text.filter_mode", "text.filter_mask",
     "text.suppress_blank", "text.suppress_regex", "text.suppress_exact",
     "export.path",

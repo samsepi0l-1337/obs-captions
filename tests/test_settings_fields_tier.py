@@ -55,7 +55,11 @@ def test_beginner_essentials_stay_simple():
 
 
 def test_all_audio_server_text_hotkey_are_advanced():
+    # text.replacements is a deliberate exception: the beginner-facing
+    # "잘못 들리는 단어 교정" editor stays simple (see test below).
     for f in sf.FIELDS:
+        if f.key == "text.replacements":
+            continue
         if (
             f.key.startswith("audio.")
             or f.key.startswith("server.")
@@ -63,6 +67,11 @@ def test_all_audio_server_text_hotkey_are_advanced():
             or f.key.startswith("obs.hotkey.")
         ):
             assert f.tier == "advanced", f"{f.key} should be advanced"
+
+
+def test_replacements_editor_is_simple_for_beginners():
+    by_key = {f.key: f for f in sf.FIELDS}
+    assert by_key["text.replacements"].tier == "simple"
 
 
 def test_overlay_only_three_are_simple():

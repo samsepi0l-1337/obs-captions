@@ -74,6 +74,42 @@ def test_replacement_editor_set_clears_previous_rows():
         root.destroy()
 
 
+def test_replacement_editor_preserves_extra_rule_fields():
+    """regex/ignore_case/whole_word must survive a set->get round-trip."""
+    from obs_captions.gui.widgets import ReplacementListEditor
+
+    root = _root()
+    try:
+        editor = ReplacementListEditor(
+            root,
+            [{"match": "a", "replace": "b", "regex": True,
+              "ignore_case": False, "whole_word": True}],
+        )
+        got = editor.get()
+        assert got == [{
+            "match": "a", "replace": "b", "regex": True,
+            "ignore_case": False, "whole_word": True,
+        }]
+    finally:
+        root.destroy()
+
+
+def test_replacement_editor_edits_match_but_keeps_flags():
+    from obs_captions.gui.widgets import ReplacementListEditor
+
+    root = _root()
+    try:
+        editor = ReplacementListEditor(
+            root, [{"match": "a", "replace": "b", "regex": True}]
+        )
+        # Simulate the user editing the match text of the first row.
+        editor._rows[0][0].set("z")
+        got = editor.get()
+        assert got == [{"match": "z", "replace": "b", "regex": True}]
+    finally:
+        root.destroy()
+
+
 def test_replacement_editor_has_frame_widget():
     from tkinter import ttk
 
