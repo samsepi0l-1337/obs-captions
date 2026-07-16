@@ -56,3 +56,62 @@ def test_stop_terminates_running_process():
     r.stop()
     r._thread.join(timeout=5)
     assert not r.is_running()
+
+
+def test_second_start_while_running_raises_and_keeps_first_process():
+    import sys
+
+    r = CaptionRunner()
+    r._argv_override = [sys.executable, "-c", "import time; time.sleep(30)"]
+    r.start("browser", lambda _line: None)
+    try:
+        assert r.is_running()
+        first = r._process
+        try:
+            r.start("browser", lambda _line: None)
+        except RuntimeError as exc:
+            assert "already running" in str(exc)
+        else:  # pragma: no cover - guard must raise
+            raise AssertionError("second start() must raise RuntimeError")
+        # the original handle must not have been overwritten/leaked
+        assert r._process is first
+    finally:
+        r.stop()
+        r._thread.join(timeout=5)
+    assert not r.is_running()
+
+
+def test_start_allowed_again_after_stop():
+    import sys
+
+    r = CaptionRunner()
+    r._argv_override = [sys.executable, "-c", "import time; time.sleep(30)"]
+    r.start("browser", lambda _line: None)
+    r.stop()
+    r._thread.join(timeout=5)
+    assert not r.is_running()
+    # restart must succeed (no lingering "already running" state)
+    r.start("browser", lambda _line: None)
+    assert r.is_running()
+    r.stop()
+    r._thread.join(timeout=5)
+
+
+def test_on_exit_called_with_return_code():
+    import sys
+    import threading
+
+    r = CaptionRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    done = threading.Event()
+
+    def on_exit(code: int) -> None:
+        codes.append(code)
+        done.set()
+
+    r._argv_override = [sys.executable, "-c", "import sys; print('hi'); sys.exit(3)"]
+    r.start("browser", lines.append, on_exit)
+    assert done.wait(timeout=5)
+    assert codes == [3]
+    assert any("hi" in line for line in lines)

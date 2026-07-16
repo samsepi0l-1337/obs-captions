@@ -35,8 +35,21 @@ class CaptionRunner:
             base = [sys.executable, "-m", "obs_captions"]
         return [*base, "run", "--sink", sink]
 
-    def start(self, sink: str, on_line: Callable[[str], None]) -> None:
-        """Launch the subprocess and stream its combined stdout/stderr to ``on_line``."""
+    def start(
+        self,
+        sink: str,
+        on_line: Callable[[str], None],
+        on_exit: Callable[[int], None] | None = None,
+    ) -> None:
+        """Launch the subprocess and stream its combined stdout/stderr to ``on_line``.
+
+        Guards against orphaning a live child: if a pipeline is already running,
+        raise instead of overwriting ``self._process`` (which would leak the old
+        handle). ``on_exit`` — when given — is invoked from the background pump
+        thread with the child's return code once its stdout is drained.
+        """
+        if self.is_running():
+            raise RuntimeError("caption pipeline already running")
         argv = self._argv_override if self._argv_override is not None else self.build_argv(sink)
         self._process = subprocess.Popen(
             argv,
@@ -46,16 +59,22 @@ class CaptionRunner:
             bufsize=1,
             creationflags=_STARTUPINFO_FLAG if sys.platform == "win32" else 0,
         )
-        self._thread = threading.Thread(target=self._pump, args=(on_line,), daemon=True)
+        self._thread = threading.Thread(target=self._pump, args=(on_line, on_exit), daemon=True)
         self._thread.start()
 
-    def _pump(self, on_line: Callable[[str], None]) -> None:
+    def _pump(
+        self,
+        on_line: Callable[[str], None],
+        on_exit: Callable[[int], None] | None = None,
+    ) -> None:
         process = self._process
         if process is None or process.stdout is None:
             return
         for line in process.stdout:
             on_line(line.rstrip("\n"))
         process.wait()
+        if on_exit is not None:
+            on_exit(process.returncode)
 
     def stop(self) -> None:
         """Terminate the running subprocess, if any."""
