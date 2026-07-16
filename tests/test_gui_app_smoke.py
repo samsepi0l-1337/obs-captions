@@ -100,6 +100,80 @@ def test_apply_recommendation_sets_model_size():
     assert "CPU" in cpu_text
 
 
+def _wire_key_test(monkeypatch, result):
+    """Common setup for key-test-button tests: synchronous marshaling + fakes.
+
+    Returns (build_app, captured_messages_list). ``validate_engine`` is stubbed
+    to return ``result``; background execution and root.after run synchronously
+    so the click-to-result flow is deterministic without a Tk mainloop.
+    """
+    from obs_captions.gui import app as app_mod
+    from obs_captions.gui.app import build_app
+
+    captured: list[tuple] = []
+    monkeypatch.setattr(app_mod, "_run_in_background", lambda fn: fn())
+    monkeypatch.setattr(app_mod.validate, "validate_engine", lambda *a, **k: result)
+    monkeypatch.setattr(app_mod.messagebox, "showinfo", lambda *a, **k: captured.append(("info", a)))
+    monkeypatch.setattr(
+        app_mod.messagebox, "showwarning", lambda *a, **k: captured.append(("warn", a))
+    )
+    return build_app, captured
+
+
+def test_key_test_button_success(monkeypatch):
+    from obs_captions.stt.validate import ValidationResult
+
+    build_app, captured = _wire_key_test(
+        monkeypatch, ValidationResult(True, "network", "키가 정상 확인되었습니다.")
+    )
+    root = _root()
+    root.after = lambda _delay, fn=None, *a: fn(*a) if fn else None
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        window.engine_widget.set("openai")
+        window.test_key_button.invoke()
+        assert captured and captured[0][0] == "info"
+        assert str(window.key_status_label["foreground"]) == "green"
+    finally:
+        root.destroy()
+
+
+def test_key_test_button_failure(monkeypatch):
+    from obs_captions.stt.validate import ValidationResult
+
+    build_app, captured = _wire_key_test(
+        monkeypatch, ValidationResult(False, "network", "인증 실패: 키를 확인하세요.")
+    )
+    root = _root()
+    root.after = lambda _delay, fn=None, *a: fn(*a) if fn else None
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        window.engine_widget.set("openai")
+        window.test_key_button.invoke()
+        assert captured and captured[0][0] == "warn"
+        assert str(window.key_status_label["foreground"]) == "red"
+    finally:
+        root.destroy()
+
+
+def test_key_test_button_unsupported(monkeypatch):
+    from obs_captions.stt.validate import ValidationResult
+
+    build_app, captured = _wire_key_test(
+        monkeypatch, ValidationResult(False, "unsupported", "자동 검증을 지원하지 않습니다.")
+    )
+    root = _root()
+    root.after = lambda _delay, fn=None, *a: fn(*a) if fn else None
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        window.engine_widget.set("assemblyai")
+        window.test_key_button.invoke()
+        assert captured and captured[0][0] == "warn"
+        assert str(window.key_status_label["foreground"]) == "gray"
+    finally:
+        root.destroy()
+
+
 def test_stop_button_disabled_initially():
     from obs_captions.gui.app import build_app
 

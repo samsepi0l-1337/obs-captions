@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from obs_captions.gui import config_io, sections
 from obs_captions.gui.runner import CaptionRunner
 from obs_captions.gui.widgets import ChoiceBox
+from obs_captions.stt import validate
 
 if TYPE_CHECKING:
     from obs_captions.stt.hardware import HardwareInfo
@@ -46,6 +47,9 @@ class AppWindow:
     advanced_check: ttk.Checkbutton | None = None
     recommend_label: ttk.Label | None = None
     apply_recommend_button: ttk.Button | None = None
+    engine_widget: ChoiceBox | None = None
+    test_key_button: ttk.Button | None = None
+    key_status_label: ttk.Label | None = None
     collectors: dict[str, Any] = field(default_factory=dict)
 
 
@@ -54,6 +58,26 @@ def _collect_all(collectors: dict[str, Any]) -> dict[str, Any]:
     for collect in collectors.values():
         merged.update(collect())
     return merged
+
+
+def _run_in_background(fn: Any) -> None:
+    """Run ``fn`` on a daemon thread (indirection so tests can run it inline)."""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+def _result_color(result: validate.ValidationResult) -> str:
+    if result.ok:
+        return "green"
+    if result.mode == "unsupported":
+        return "gray"
+    return "red"
+
+
+def _current_key_widget(registry: dict[str, Any], engine: str) -> Any | None:
+    for field_spec, _label, widget, _help in registry.get("field_widgets", {}).values():
+        if field_spec.widget == "secret" and engine in field_spec.engines:
+            return widget
+    return None
 
 
 def _detect_recommendation() -> tuple[str, HardwareInfo]:
@@ -126,6 +150,55 @@ def _wire_model_recommendation(
     return rec_label, apply_button
 
 
+def _wire_key_test(
+    controls: ttk.Frame, root: tk.Misc, registry: dict[str, Any]
+) -> tuple[ttk.Button, ttk.Label]:
+    """Add a "키 테스트" button that validates the selected engine's API key.
+
+    Validation runs off the Tk thread (via ``_run_in_background``) and pushes its
+    result onto a queue; a ``root.after`` poller applies the result — coloured
+    status label + messagebox — and re-enables the button, so the worker never
+    touches Tk directly.
+    """
+    status_label = ttk.Label(controls, text="", foreground="gray")
+    result_q: queue.Queue[validate.ValidationResult] = queue.Queue(maxsize=1)
+
+    def _poll() -> None:
+        try:
+            result = result_q.get_nowait()
+        except queue.Empty:
+            root.after(100, _poll)
+            return
+        status_label.config(text=result.message, foreground=_result_color(result))
+        if result.ok:
+            messagebox.showinfo("키 검증", result.message)
+        else:
+            messagebox.showwarning("키 검증", result.message)
+        test_button.config(state="normal")
+
+    def _on_test() -> None:
+        engine = registry["engine_widget"].get() if registry.get("engine_widget") else ""
+        key_widget = _current_key_widget(registry, engine)
+        if key_widget is None:
+            status_label.config(text="이 엔진은 API 키가 필요 없습니다.", foreground="gray")
+            messagebox.showinfo("키 검증", "이 엔진은 API 키가 필요 없습니다.")
+            return
+        api_key = key_widget.get()
+        test_button.config(state="disabled")
+        status_label.config(text="검증 중...", foreground="gray")
+
+        def _work() -> None:
+            result_q.put(validate.validate_engine(engine, api_key))
+
+        _run_in_background(_work)
+        root.after(100, _poll)
+
+    test_button = ttk.Button(controls, text="키 테스트", command=_on_test)
+    test_button.pack(side="left", padx=4)
+    status_label.pack(side="left")
+    return test_button, status_label
+
+
 def build_app(
     root: tk.Misc,
     *,
@@ -161,6 +234,7 @@ def build_app(
     advanced_check.pack(side="left")
 
     recommend_label, apply_recommend_button = _wire_model_recommendation(root, registry)
+    test_key_button, key_status_label = _wire_key_test(controls, root, registry)
 
     ttk.Label(controls, text="Sink").pack(side="left")
     sink_choice = ChoiceBox(controls, _SINK_CHOICES, "browser")
@@ -243,6 +317,9 @@ def build_app(
         advanced_check=advanced_check,
         recommend_label=recommend_label,
         apply_recommend_button=apply_recommend_button,
+        engine_widget=registry.get("engine_widget"),
+        test_key_button=test_key_button,
+        key_status_label=key_status_label,
         collectors=collectors,
     )
 
