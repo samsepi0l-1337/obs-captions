@@ -67,6 +67,39 @@ def test_advanced_checkbox_present_and_toggles(monkeypatch):
         root.destroy()
 
 
+def test_model_recommendation_widgets_present(monkeypatch):
+    from obs_captions.gui import app as app_mod
+    from obs_captions.gui.app import build_app
+    from obs_captions.stt.hardware import HardwareInfo
+
+    fake = HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
+    # Avoid a real hardware probe in the background worker thread.
+    monkeypatch.setattr(app_mod, "_detect_recommendation", lambda: ("large-v3-turbo", fake))
+
+    root = _root()
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        assert window.recommend_label is not None
+        assert window.apply_recommend_button is not None
+    finally:
+        root.destroy()
+
+
+def test_apply_recommendation_sets_model_size():
+    from obs_captions.gui.app import _format_recommendation
+    from obs_captions.stt.hardware import HardwareInfo
+
+    gpu = HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
+    text = _format_recommendation("large-v3-turbo", gpu)
+    assert "large-v3-turbo" in text
+    assert "16000" in text
+
+    cpu = HardwareInfo(cuda_available=False, vram_mb=None, ram_mb=8000, cpu_count=8)
+    cpu_text = _format_recommendation("medium", cpu)
+    assert "medium" in cpu_text
+    assert "CPU" in cpu_text
+
+
 def test_stop_button_disabled_initially():
     from obs_captions.gui.app import build_app
 

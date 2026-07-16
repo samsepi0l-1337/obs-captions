@@ -55,6 +55,14 @@ ENGINES: tuple[str, ...] = (
     "replicate",
     "groq",
 )
-LOCAL_MODEL_SIZES: tuple[str, ...] = ("tiny", "base", "small", "medium", "large-v3")
+LOCAL_MODEL_SIZES: tuple[str, ...] = (
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+    "distil-large-v3",
+)
 
 __all__ = ["ENGINES", "FieldSpec", "LOCAL_MODEL_SIZES", "Tier", "Widget"]

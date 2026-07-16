@@ -59,6 +59,24 @@ def run_command(config_path: str | None, sink: str) -> None:  # pragma: no cover
     asyncio.run(_run(config_path, sink))
 
 
+@cli.command("recommend-model")
+def recommend_model_command() -> None:
+    """Detect hardware and print the recommended local model as JSON."""
+    import obs_captions.stt.hardware as hardware
+
+    info = hardware.detect_hardware()
+    payload = {
+        "recommended": hardware.recommend_model(info),
+        "hardware": {
+            "cuda_available": info.cuda_available,
+            "vram_mb": info.vram_mb,
+            "ram_mb": info.ram_mb,
+            "cpu_count": info.cpu_count,
+        },
+    }
+    click.echo(json.dumps(payload, ensure_ascii=False))
+
+
 @cli.command("config")
 @click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None)
 def config_command(config_path: str | None) -> None:

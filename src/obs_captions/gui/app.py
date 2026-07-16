@@ -7,18 +7,23 @@ CLI's no-args dispatch (see ``obs_captions.cli``).
 
 from __future__ import annotations
 
+import queue
+import threading
 import tkinter as tk
 from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from obs_captions.gui import config_io, sections
 from obs_captions.gui.runner import CaptionRunner
 from obs_captions.gui.widgets import ChoiceBox
+
+if TYPE_CHECKING:
+    from obs_captions.stt.hardware import HardwareInfo
 
 DEFAULT_CONFIG_PATH = Path("config.toml")
 DEFAULT_ENV_PATH = Path(".env")
@@ -39,6 +44,8 @@ class AppWindow:
     status_label: ttk.Label
     log_widget: ScrolledText
     advanced_check: ttk.Checkbutton | None = None
+    recommend_label: ttk.Label | None = None
+    apply_recommend_button: ttk.Button | None = None
     collectors: dict[str, Any] = field(default_factory=dict)
 
 
@@ -47,6 +54,76 @@ def _collect_all(collectors: dict[str, Any]) -> dict[str, Any]:
     for collect in collectors.values():
         merged.update(collect())
     return merged
+
+
+def _detect_recommendation() -> tuple[str, HardwareInfo]:
+    """Probe hardware and return ``(recommended_model, hardware_info)`` (IO)."""
+    from obs_captions.stt.hardware import detect_hardware, recommend_model
+
+    info = detect_hardware()
+    return recommend_model(info), info
+
+
+def _format_recommendation(model: str, info: HardwareInfo) -> str:
+    detected = f"GPU {info.vram_mb}MB" if info.vram_mb is not None else "CPU"
+    return f"추천: {model} (감지: {detected})"
+
+
+def _wire_model_recommendation(
+    root: tk.Misc, registry: dict[str, Any]
+) -> tuple[ttk.Label | None, ttk.Button | None]:
+    """Add a recommendation label + "추천값 적용" button beside the local model box.
+
+    Hardware detection runs on a background thread that touches no Tk objects
+    (thread-unsafe on macOS); it only pushes its result onto a queue. A main-loop
+    ``root.after`` poller drains the queue and updates the widgets on the Tk
+    thread. On failure the label shows a plain message and the button stays off.
+    """
+    entry = registry.get("field_widgets", {}).get("local.model_size")
+    if entry is None:
+        return None, None
+    model_widget = entry[2]
+    parent = model_widget.widget.master
+
+    rec_label = ttk.Label(
+        parent, text="추천 모델 계산 중...", foreground="gray", font=("TkDefaultFont", 8)
+    )
+    rec_label.grid(row=100, column=0, columnspan=2, sticky="w")
+    pending: dict[str, str | None] = {"model": None}
+
+    def _apply() -> None:
+        if pending["model"] is not None:
+            model_widget.set(pending["model"])
+
+    apply_button = ttk.Button(parent, text="추천값 적용", command=_apply, state="disabled")
+    apply_button.grid(row=101, column=0, sticky="w")
+
+    result_q: queue.Queue[tuple[str, HardwareInfo] | None] = queue.Queue(maxsize=1)
+
+    def _worker() -> None:
+        try:
+            result_q.put(_detect_recommendation())
+        except Exception:  # noqa: BLE001 - detection must never crash the GUI
+            result_q.put(None)
+
+    def _poll(remaining: int = 100) -> None:
+        try:
+            result = result_q.get_nowait()
+        except queue.Empty:
+            if remaining > 0:
+                root.after(100, lambda: _poll(remaining - 1))
+            return
+        if result is None:
+            rec_label.config(text="추천을 계산할 수 없습니다.")
+            return
+        model, info = result
+        pending["model"] = model
+        rec_label.config(text=_format_recommendation(model, info))
+        apply_button.config(state="normal")
+
+    threading.Thread(target=_worker, daemon=True).start()
+    root.after(100, _poll)
+    return rec_label, apply_button
 
 
 def build_app(
@@ -82,6 +159,8 @@ def build_app(
         controls, text="고급 설정 표시", variable=show_advanced_var, command=_on_toggle_advanced
     )
     advanced_check.pack(side="left")
+
+    recommend_label, apply_recommend_button = _wire_model_recommendation(root, registry)
 
     ttk.Label(controls, text="Sink").pack(side="left")
     sink_choice = ChoiceBox(controls, _SINK_CHOICES, "browser")
@@ -162,6 +241,8 @@ def build_app(
         status_label=status_label,
         log_widget=log_widget,
         advanced_check=advanced_check,
+        recommend_label=recommend_label,
+        apply_recommend_button=apply_recommend_button,
         collectors=collectors,
     )
 

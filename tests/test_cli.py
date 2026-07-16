@@ -639,6 +639,52 @@ def test_config_command_outputs_json():
 
 
 # ---------------------------------------------------------------------------
+# recommend-model command
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_model_outputs_json(monkeypatch):
+    """recommend-model prints {recommended, hardware} JSON from detected hardware."""
+    import json
+
+    import obs_captions.stt.hardware as hw_mod
+
+    fake = hw_mod.HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
+    monkeypatch.setattr(hw_mod, "detect_hardware", lambda: fake)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["recommend-model"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["recommended"] == "large-v3-turbo"
+    assert data["hardware"] == {
+        "cuda_available": True,
+        "vram_mb": 16000,
+        "ram_mb": 32000,
+        "cpu_count": 16,
+    }
+
+
+def test_recommend_model_cpu_only(monkeypatch):
+    """CPU-only host with modest RAM recommends a small model and reports no VRAM."""
+    import json
+
+    import obs_captions.stt.hardware as hw_mod
+
+    fake = hw_mod.HardwareInfo(cuda_available=False, vram_mb=None, ram_mb=4000, cpu_count=4)
+    monkeypatch.setattr(hw_mod, "detect_hardware", lambda: fake)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["recommend-model"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["recommended"] == "small"
+    assert data["hardware"]["vram_mb"] is None
+
+
+# ---------------------------------------------------------------------------
 # make_capture
 # ---------------------------------------------------------------------------
 
