@@ -12,6 +12,7 @@ only the visible tab text is localized to Korean via :data:`_SECTION_LABELS`.
 from __future__ import annotations
 
 import json
+import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
 from typing import Any
@@ -128,6 +129,83 @@ def _make_visibility_applier(
     return apply
 
 
+def _wheel_step(event: Any) -> int:
+    """Return the ``yview_scroll`` step (+1/-1) for a wheel event.
+
+    Windows/macOS deliver ``<MouseWheel>`` with a signed ``delta``; X11/Linux
+    has no delta at all and instead sends ``<Button-4>`` (scroll up) /
+    ``<Button-5>`` (scroll down) button-press events, distinguished by
+    ``event.num``.
+    """
+    delta = getattr(event, "delta", 0)
+    if delta:
+        return -1 if delta > 0 else 1
+    return -1 if getattr(event, "num", 0) == 4 else 1
+
+
+def _scroll_target_canvas(widget: Any) -> tk.Canvas | None:
+    """Walk ``widget``'s master chain up to its owning scrollable Canvas."""
+    while widget is not None:
+        if isinstance(widget, tk.Canvas):
+            return widget
+        widget = getattr(widget, "master", None)
+    return None
+
+
+def _on_wheel_anywhere(event: Any) -> None:
+    """Route a wheel event to whichever tab's Canvas actually owns it.
+
+    Bound globally (see :func:`_make_scrollable_tab`) rather than only while
+    the pointer sits directly over the Canvas: moving onto a child input
+    widget (Entry/Combobox/...) fires a plain ``<Enter>`` into that child, and
+    on macOS Aqua Tk crossing events carry no ``detail`` field at all — so an
+    Enter/Leave-based unbind (or a "NotifyInferior" check, which only exists
+    on X11) cannot reliably distinguish "moved to a child" from "moved away
+    entirely" and ends up disabling scroll over most of the tab's own input
+    widgets. Resolving the target from the actual event widget instead works
+    uniformly across backends and needs no bind/unbind toggling at all.
+    """
+    canvas = _scroll_target_canvas(event.widget)
+    if canvas is not None:
+        canvas.yview_scroll(_wheel_step(event), "units")
+
+
+def _make_scrollable_tab(notebook: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
+    """Return ``(page, content)`` where ``page`` is the Notebook tab and
+    ``content`` is a vertically-scrollable inner frame to grid fields into.
+
+    Fields are placed in ``content`` (inside a Canvas) so a tab with more rows
+    than the window height gains a scrollbar + mouse-wheel scrolling instead of
+    clipping. ``page`` is what ``notebook.add``/``notebook.tab`` must reference.
+    """
+    page = ttk.Frame(notebook)
+    canvas = tk.Canvas(page, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+    content = ttk.Frame(canvas, padding=4)
+    window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+    def _sync_scrollregion(_event: Any = None) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _sync_width(event: Any) -> None:
+        canvas.itemconfigure(window_id, width=event.width)
+
+    content.bind("<Configure>", _sync_scrollregion)
+    canvas.bind("<Configure>", _sync_width)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    # Global, not Enter/Leave-gated: ``_on_wheel_anywhere`` resolves the
+    # correct Canvas per-event from the actual widget under the pointer, so
+    # scrolling works over input widgets too (see its docstring). Rebinding
+    # per tab is harmless — the handler is stateless and always dynamic.
+    canvas.bind_all("<MouseWheel>", _on_wheel_anywhere)
+    canvas.bind_all("<Button-4>", _on_wheel_anywhere)
+    canvas.bind_all("<Button-5>", _on_wheel_anywhere)
+    return page, content
+
+
 def build_sections(
     notebook: ttk.Notebook,
     values: dict[str, Any],
@@ -157,24 +235,30 @@ def build_sections(
         by_section[field.section].append(field)
 
     collectors: dict[str, Callable[[], dict[str, Any]]] = {}
-    frames: dict[str, ttk.Frame] = {}
+    pages: dict[str, ttk.Frame] = {}
+    content_frames: dict[str, ttk.Frame] = {}
     engine_widget: ChoiceBox | None = None
     visibility_specs: list[tuple[FieldSpec, list[Any]]] = []
     field_widgets: dict[str, tuple[FieldSpec, ttk.Label, Any, ttk.Label | None]] = {}
+    recommend_row = 100
 
     for section in order:
-        frame = ttk.Frame(notebook)
-        notebook.add(frame, text=_SECTION_LABELS.get(section, section))
-        frames[section] = frame
+        page, frame = _make_scrollable_tab(notebook)
+        notebook.add(page, text=_SECTION_LABELS.get(section, section))
+        # Column 1 (inputs) expands to the tab width so ``sticky="ew"`` widgets
+        # actually stretch instead of hugging their content.
+        frame.grid_columnconfigure(1, weight=1)
+        pages[section] = page
+        content_frames[section] = frame
 
         section_widgets: list[tuple[FieldSpec, Any]] = []
         row = 0
         for field in by_section[section]:
             key = _field_key(field)
             label = ttk.Label(frame, text=field.label)
-            label.grid(row=row, column=0, sticky="w")
+            label.grid(row=row, column=0, sticky="w", padx=4, pady=2)
             widget = _make_widget(frame, field, values.get(key))
-            widget.widget.grid(row=row, column=1, sticky="ew")
+            widget.widget.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
             row_widgets: list[Any] = [label, widget.widget]
 
             help_label: ttk.Label | None = None
@@ -183,7 +267,7 @@ def build_sections(
                 help_label = ttk.Label(
                     frame, text=field.help, foreground="gray", font=("TkDefaultFont", 8)
                 )
-                help_label.grid(row=row, column=0, columnspan=2, sticky="w")
+                help_label.grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
                 row_widgets.append(help_label)
             row += 1
 
@@ -192,6 +276,11 @@ def build_sections(
             visibility_specs.append((field, row_widgets))
             if field.key == "engine":
                 engine_widget = widget
+            if field.key == "local.model_size":
+                # Reserve two rows immediately below the model box for the
+                # hardware recommendation label + "apply" button (wired in app).
+                recommend_row = row
+                row += 2
 
         def collect(widgets: list[tuple[FieldSpec, Any]] = section_widgets) -> dict[str, Any]:
             return {_field_key(field): _widget_value(field, widget) for field, widget in widgets}
@@ -201,13 +290,16 @@ def build_sections(
     apply_visibility: Callable[..., None] | None = None
     if engine_widget is not None:
         apply_visibility = _make_visibility_applier(
-            notebook, engine_widget, frames.get("Local"), visibility_specs
+            notebook, engine_widget, pages.get("Local"), visibility_specs
         )
 
     if registry is not None:
         registry["engine_widget"] = engine_widget
         registry["field_widgets"] = field_widgets
         registry["apply_visibility"] = apply_visibility
+        registry["frames"] = content_frames
+        registry["tab_pages"] = pages
+        registry["recommend_row"] = recommend_row
 
     return collectors
 

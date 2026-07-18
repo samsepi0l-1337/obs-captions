@@ -94,7 +94,19 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # Dev/test-only or unreferenced modules — trimmed to shrink the frozen
+        # bundle. Each verified absent from app code via grep; frozen smoke is
+        # gated by CI (release/ci).
+        "pytest",
+        "_pytest",
+        "setuptools",
+        "pip",
+        "pygments",
+        "numpy.testing",
+        "numpy.f2py",
+        "tkinter.test",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

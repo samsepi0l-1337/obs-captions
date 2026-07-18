@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "obs-captions"
-version = "0.1.4"
+version = "0.1.10a"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi",
-    "uvicorn[standard]",
+    "uvicorn",
     "websockets",
     "pydantic>=2",
     "pydantic-settings",

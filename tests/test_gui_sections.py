@@ -56,6 +56,149 @@ def test_sections_cover_expected_gui_tabs():
         root.destroy()
 
 
+def test_tab_content_column_expands():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        for frame in registry["frames"].values():
+            # Column 1 (inputs) must expand so sticky="ew" widgets stretch.
+            assert int(frame.grid_columnconfigure(1)["weight"]) == 1
+    finally:
+        root.destroy()
+
+
+def test_each_tab_is_scrollable_canvas():
+    import tkinter as tk
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        for page in registry["tab_pages"].values():
+            canvases = [c for c in page.winfo_children() if isinstance(c, tk.Canvas)]
+            scrollbars = [c for c in page.winfo_children() if isinstance(c, ttk.Scrollbar)]
+            assert canvases, "each tab must wrap its fields in a scroll Canvas"
+            assert scrollbars, "each tab must expose a vertical scrollbar"
+    finally:
+        root.destroy()
+
+
+def test_wheel_step_handles_macos_windows_delta_and_x11_buttons():
+    from types import SimpleNamespace
+
+    from obs_captions.gui.sections import _wheel_step
+
+    assert _wheel_step(SimpleNamespace(delta=120)) == -1  # macOS/Windows: scroll up
+    assert _wheel_step(SimpleNamespace(delta=-120)) == 1  # macOS/Windows: scroll down
+    assert _wheel_step(SimpleNamespace(delta=0, num=4)) == -1  # X11 Button-4: up
+    assert _wheel_step(SimpleNamespace(delta=0, num=5)) == 1  # X11 Button-5: down
+
+
+def test_scroll_target_canvas_resolves_from_nested_input_widget():
+    import tkinter as tk
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        entry_widget = registry["field_widgets"]["engine"][2].widget
+        canvas = sections._scroll_target_canvas(entry_widget)
+        assert isinstance(canvas, tk.Canvas)
+        # A widget with no Canvas ancestor at all resolves to None.
+        orphan = ttk.Label(root)
+        assert sections._scroll_target_canvas(orphan) is None
+    finally:
+        root.destroy()
+
+
+def test_mousewheel_scrolls_even_when_pointer_is_over_an_input_widget():
+    """Low-2 regression: scrolling must work while hovering an Entry, not
+    only while directly over the Canvas — no Enter/Leave gating to misfire.
+    """
+    from types import SimpleNamespace
+
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        entry_widget = registry["field_widgets"]["engine"][2].widget
+        canvas = sections._scroll_target_canvas(entry_widget)
+        assert canvas is not None
+
+        calls: list = []
+        canvas.yview_scroll = lambda *a: calls.append(a)
+
+        sections._on_wheel_anywhere(SimpleNamespace(widget=entry_widget, delta=-120))
+        assert calls == [(1, "units")]  # scroll down
+
+        calls.clear()
+        sections._on_wheel_anywhere(SimpleNamespace(widget=entry_widget, delta=120))
+        assert calls == [(-1, "units")]  # scroll up
+    finally:
+        root.destroy()
+
+
+def test_mousewheel_and_linux_buttons_bound_globally_after_build():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        sections.build_sections(nb, values)
+        # Bound via bind_all (not gated by Enter/Leave over the Canvas), so
+        # scrolling isn't lost the moment the pointer crosses onto an input.
+        assert root.bind_all("<MouseWheel>")
+        assert root.bind_all("<Button-4>")
+        assert root.bind_all("<Button-5>")
+    finally:
+        root.destroy()
+
+
+def test_recommend_row_sits_just_below_model_size():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        model_row = int(registry["field_widgets"]["local.model_size"][2].widget.grid_info()["row"])
+        rec_row = registry["recommend_row"]
+        # Reserved slot is directly below the model box, not dumped at the bottom.
+        assert model_row < rec_row <= model_row + 2
+    finally:
+        root.destroy()
+
+
 class _Stub:
     def __init__(self, value: str):
         self._value = value

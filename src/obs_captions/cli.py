@@ -4,18 +4,39 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
-import obs_captions.app_runner as app_runner
 from obs_captions.config import load_config, redacted_config
 
+# app_runner pulls in config (pydantic) + stt (numpy) at import time, so it is
+# loaded lazily below rather than at module top level to keep the lightweight
+# CLI subcommands (and the no-args GUI dispatch in ``main``) fast to start.
+# Module-level ``__getattr__`` (PEP 562) forwards the historically re-exported
+# names — ``make_capture``, ``_build_caption_callbacks``, etc. — so existing
+# ``from obs_captions.cli import make_capture`` imports keep working while the
+# real ``app_runner`` import is deferred to first access.
+_APP_RUNNER_FORWARDS = frozenset(
+    {
+        "app_runner",
+        "_capture_to_backend",
+        "_build_caption_callbacks",
+        "_run_demo_backend",
+        "_setup_export_sink",
+        "make_capture",
+    }
+)
 
-_capture_to_backend = app_runner._capture_to_backend
-_build_caption_callbacks = app_runner._build_caption_callbacks
-_run_demo_backend = app_runner._run_demo_backend
-_setup_export_sink = app_runner._setup_export_sink
-make_capture = app_runner.make_capture
+
+def __getattr__(name: str) -> Any:
+    if name in _APP_RUNNER_FORWARDS:
+        import obs_captions.app_runner as app_runner
+
+        if name == "app_runner":
+            return app_runner
+        return getattr(app_runner, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @click.group(name="obs-captions")
@@ -134,18 +155,24 @@ def ipc_sidecar_command(config_path: str | None) -> None:
 
 
 async def _run(config_path: str | None, sink: str = "browser") -> None:
+    import obs_captions.app_runner as app_runner
     import obs_captions.stt.registry as registry_mod
 
     return await app_runner._run(
         config_path,
         sink,
         load_config_fn=load_config,
-        make_capture_fn=make_capture,
+        # Resolve through the module object so a monkeypatched
+        # ``cli.make_capture`` (tests) wins, else the lazy ``__getattr__``
+        # forward to ``app_runner.make_capture`` applies.
+        make_capture_fn=sys.modules[__name__].make_capture,
         create_backend_fn=registry_mod.create_backend,
     )
 
 
 async def _serve(config_path: str | None, demo: bool) -> None:
+    import obs_captions.app_runner as app_runner
+
     return await app_runner._serve(
         config_path,
         demo,
@@ -199,6 +226,8 @@ def check_engine_command(
 def _overlay_dir() -> Path:  # pragma: no cover  # only called from _serve/_run which requires a live server
     # Resolve the bundled overlay assets relative to the package (dev/pip) or
     # the PyInstaller bundle (frozen) — never CWD-relative. See packaging.py.
+    import obs_captions.app_runner as app_runner
+
     return app_runner._overlay_dir()
 
 

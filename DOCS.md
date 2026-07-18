@@ -849,6 +849,17 @@ src/obs_captions/
 
 `text.replacements`를 행 추가/삭제식 에디터로 편집("들리는 말 → 교정"). 상세는 [8번 Feature 1](#feature-1--텍스트-치환-textpy-apply_replacements).
 
+### 데스크톱 GUI 레이아웃
+
+`gui/app.py`(창·컨트롤)와 `gui/sections.py`(스키마 기반 탭)로 구성된다. 좁은 창(640px)에서도 실사용 가능하도록:
+
+- **입력 컬럼 확장**: 각 탭의 입력 위젯 컬럼(col 1)이 창 폭에 맞춰 늘어난다(`grid_columnconfigure(1, weight=1)`).
+- **탭 세로 스크롤**: 필드가 많은 탭(출력·일반·로컬)은 `Canvas`+`Scrollbar`로 감싸 스크롤 + 마우스휠을 지원한다.
+- **2줄 컨트롤 바**: 실행(Start/Stop/Save/Sink/상태)과 보조(고급 토글·키 테스트·설정 폴더 열기)를 두 줄로 분리해 클립을 방지한다.
+- **설정 폴더 열기**: config/.env가 있는 폴더를 OS별로 연다(macOS `open`, Windows `explorer`, Linux `xdg-open`). 명령 구성은 순수 함수 `gui/controls.py:open_folder_command`.
+- **모델 추천 위치**: 추천 라벨/버튼을 `local.model_size` 필드 바로 아래에 배치.
+- **견고성**: 키 검증 폴러는 재시도 상한을 두고 실패 시 버튼을 다시 활성화한다. 창 종료(`WM_DELETE_WINDOW`) 시 실행 중이면 자막 자식 프로세스를 정리한다.
+
 ---
 
-_최종 갱신: 2026-07-16 — SP1 설정 UX + STT 기능(간단/고급 분리, 모델 추천, 인식 힌트, 치환 에디터, 키 검증) 반영_
+_최종 갱신: 2026-07-18 — 데스크톱 GUI 레이아웃(입력 컬럼 확장·탭 스크롤·2줄 컨트롤·설정 폴더 열기·견고성) 반영. 이전: 2026-07-16 SP1 설정 UX + STT 기능_
