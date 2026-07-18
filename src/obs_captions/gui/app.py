@@ -20,12 +20,9 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from obs_captions.gui import config_io, sections
-from obs_captions.gui.controls import config_folder as _config_folder
-from obs_captions.gui.controls import current_key_widget as _current_key_widget
+from obs_captions.gui import controls as _controls
+# Own name (tests monkeypatch app_mod._detect_recommendation directly).
 from obs_captions.gui.controls import detect_recommendation as _detect_recommendation
-from obs_captions.gui.controls import format_recommendation as _format_recommendation
-from obs_captions.gui.controls import open_folder_command as _open_folder_command
-from obs_captions.gui.controls import result_color as _result_color
 from obs_captions.gui.runner import CaptionRunner
 from obs_captions.gui.widgets import ChoiceBox
 from obs_captions.stt import validate
@@ -78,10 +75,8 @@ def _wire_model_recommendation(
 ) -> tuple[ttk.Label | None, ttk.Button | None]:
     """Add a recommendation label + "추천값 적용" button beside the local model box.
 
-    Hardware detection runs on a background thread that touches no Tk objects
-    (thread-unsafe on macOS); it only pushes its result onto a queue. A main-loop
-    ``root.after`` poller drains the queue and updates the widgets on the Tk
-    thread. On failure the label shows a plain message and the button stays off.
+    Detection runs on a background thread that only pushes its result onto a
+    queue; a ``root.after`` poller drains it and updates the widgets on the Tk thread.
     """
     entry = registry.get("field_widgets", {}).get("local.model_size")
     if entry is None:
@@ -123,7 +118,7 @@ def _wire_model_recommendation(
             return
         model, info = result
         pending["model"] = model
-        rec_label.config(text=_format_recommendation(model, info))
+        rec_label.config(text=_controls.format_recommendation(model, info))
         apply_button.config(state="normal")
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -136,25 +131,31 @@ def _wire_key_test(
 ) -> tuple[ttk.Button, ttk.Label]:
     """Add a "키 테스트" button that validates the selected engine's API key.
 
-    Validation runs off the Tk thread (via ``_run_in_background``) and pushes its
-    result onto a queue; a ``root.after`` poller applies the result — coloured
-    status label + messagebox — and re-enables the button, so the worker never
-    touches Tk directly.
+    Validation runs off-thread and pushes its result onto a shared queue; a
+    ``root.after`` poller applies it. A probe can outlive the bounded ~10s
+    poll, so each click is tagged with a ``generation`` (queue: ``(gen,
+    result)``); the poller discards a stale-generation result instead of
+    showing it, and the queue is drained at the start of every click too.
     """
     status_label = ttk.Label(controls, text="", foreground="gray")
-    result_q: queue.Queue[validate.ValidationResult] = queue.Queue(maxsize=1)
+    result_q: queue.Queue[tuple[int, validate.ValidationResult]] = queue.Queue(maxsize=1)
+    generation = {"current": 0}
 
-    def _poll(remaining: int = 100) -> None:
+    def _poll(expected_generation: int, remaining: int = 100) -> None:
         try:
-            result = result_q.get_nowait()
+            result_generation, result = result_q.get_nowait()
         except queue.Empty:
             if remaining > 0:
-                root.after(100, lambda: _poll(remaining - 1))
+                root.after(100, lambda: _poll(expected_generation, remaining - 1))
             else:  # bounded retries: never leave the button permanently disabled
                 status_label.config(text="검증 시간이 초과되었습니다.", foreground="red")
                 test_button.config(state="normal")
             return
-        status_label.config(text=result.message, foreground=_result_color(result))
+        if result_generation != expected_generation:
+            # Superseded click's late result — discard, keep waiting for ours.
+            root.after(100, lambda: _poll(expected_generation, remaining))
+            return
+        status_label.config(text=result.message, foreground=_controls.result_color(result))
         if result.ok:
             messagebox.showinfo("키 검증", result.message)
         else:
@@ -163,25 +164,27 @@ def _wire_key_test(
 
     def _on_test() -> None:
         engine = registry["engine_widget"].get() if registry.get("engine_widget") else ""
-        key_widget = _current_key_widget(registry, engine)
+        key_widget = _controls.current_key_widget(registry, engine)
         if key_widget is None:
             status_label.config(text="이 엔진은 API 키가 필요 없습니다.", foreground="gray")
             messagebox.showinfo("키 검증", "이 엔진은 API 키가 필요 없습니다.")
             return
         api_key = key_widget.get()
+        generation["current"] += 1
+        my_generation = generation["current"]
+        _controls.drain_queue(result_q)  # drop any stale unconsumed prior result
         test_button.config(state="disabled")
         status_label.config(text="검증 중...", foreground="gray")
 
         def _work() -> None:
             try:
-                result_q.put(validate.validate_engine(engine, api_key))
+                result = validate.validate_engine(engine, api_key)
             except Exception:  # noqa: BLE001 - a probe crash must not wedge the button
-                result_q.put(
-                    validate.ValidationResult(False, "network", "검증 중 오류가 발생했습니다.")
-                )
+                result = validate.ValidationResult(False, "network", "검증 중 오류가 발생했습니다.")
+            result_q.put((my_generation, result))
 
         _run_in_background(_work)
-        root.after(100, _poll)
+        root.after(100, lambda: _poll(my_generation))
 
     test_button = ttk.Button(controls, text="키 테스트", command=_on_test)
     test_button.pack(side="left", padx=4)
@@ -208,8 +211,7 @@ def build_app(
     registry: dict[str, Any] = {}
     collectors = sections.build_sections(notebook, values, registry=registry)
 
-    # Two control rows so a 640px-wide window never clips: primary run controls
-    # on top, secondary/advanced helpers below.
+    # Two rows (run controls on top, advanced helpers below) so 640px never clips.
     controls = ttk.Frame(root)
     controls.pack(fill="x", padx=4, pady=(4, 0))
     controls2 = ttk.Frame(root)
@@ -231,7 +233,7 @@ def build_app(
     test_key_button, key_status_label = _wire_key_test(controls2, root, registry)
 
     def _on_open_folder() -> None:
-        command = _open_folder_command(str(_config_folder(config_path)))
+        command = _controls.open_folder_command(str(_controls.config_folder(config_path)))
         try:
             subprocess.Popen(command)
         except OSError as exc:
@@ -310,8 +312,7 @@ def build_app(
     start_button.pack(side="right")
 
     def _on_close() -> None:
-        # Never orphan a live caption child when the window is closed.
-        if active_runner.is_running():
+        if active_runner.is_running():  # never orphan a live caption child
             active_runner.stop()
         root.destroy()
 

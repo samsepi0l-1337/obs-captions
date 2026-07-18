@@ -86,7 +86,9 @@ def test_model_recommendation_widgets_present(monkeypatch):
 
 
 def test_apply_recommendation_sets_model_size():
-    from obs_captions.gui.app import _format_recommendation
+    # format_recommendation now lives in obs_captions.gui.controls (app.py
+    # re-uses it via the ``_controls`` namespace import to stay ≤350 lines).
+    from obs_captions.gui.controls import format_recommendation as _format_recommendation
     from obs_captions.stt.hardware import HardwareInfo
 
     gpu = HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
@@ -196,6 +198,89 @@ def test_key_test_button_recovers_when_probe_raises(monkeypatch):
         # A crashing probe must not wedge the button disabled forever.
         assert str(window.test_key_button["state"]) == "normal"
         assert captured  # user was warned
+    finally:
+        root.destroy()
+
+
+def test_key_test_stale_result_ignored_by_current_poll_generation(monkeypatch):
+    """Low-1 regression: a superseded click's late result must not be shown
+    (or block the shared queue) once a newer click has started.
+
+    ``result_q`` is shared across every click of "키 테스트". If a probe
+    outlives the bounded ~10s poll window, its result used to sit unconsumed
+    until the *next* click's poller happened to dequeue it and display it as
+    if it were that click's own answer. The fix tags each click with a
+    generation and has the poller discard (not display) a mismatched one.
+    """
+    from obs_captions.gui import app as app_mod
+    from obs_captions.gui.app import build_app
+    from obs_captions.stt.validate import ValidationResult
+
+    pending: list = []
+    monkeypatch.setattr(app_mod, "_run_in_background", lambda fn: pending.append(fn))
+
+    results = iter(
+        [
+            ValidationResult(False, "network", "첫 번째(오래된) 결과"),
+            ValidationResult(True, "network", "두 번째(최신) 결과"),
+        ]
+    )
+    monkeypatch.setattr(app_mod.validate, "validate_engine", lambda *a, **k: next(results))
+
+    captured: list[tuple] = []
+    monkeypatch.setattr(app_mod.messagebox, "showinfo", lambda *a, **k: captured.append(("info", a)))
+    monkeypatch.setattr(
+        app_mod.messagebox, "showwarning", lambda *a, **k: captured.append(("warn", a))
+    )
+
+    scheduled: list = []
+
+    def fake_after(_delay, fn=None, *a):
+        if fn is not None:
+            scheduled.append(lambda: fn(*a))
+        return "fake-after-id"
+
+    root = _root()
+    try:
+        # Swap in the fake only after build_app's own setup (model
+        # recommendation) has made its one real root.after call, so
+        # ``scheduled`` starts clean and only tracks key-test poll ticks.
+        window = build_app(root, runner=_FakeRunner())
+        root.after = fake_after
+        window.engine_widget.set("openai")
+
+        # Click 1 starts a probe that will not finish in time.
+        window.test_key_button.invoke()
+        assert len(pending) == 1 and len(scheduled) == 1
+        first_work = pending.pop(0)
+        scheduled.pop(0)  # click 1's own poll tick: never run, standing in
+        # for "already exhausted its bounded retries and gave up".
+
+        # Button becomes clickable again (as it does once the poller times
+        # out) and a second click supersedes the first before it finishes.
+        window.test_key_button.config(state="normal")
+        window.test_key_button.invoke()
+        assert len(pending) == 1 and len(scheduled) == 1
+        second_work = pending.pop(0)
+
+        # Click 1's stale probe finally completes and enqueues its result.
+        first_work()
+
+        # Click 2's own poll tick runs next and finds click 1's stale,
+        # mismatched-generation result sitting in the queue — it must
+        # discard it (not display it) and keep waiting.
+        scheduled.pop(0)()
+        assert captured == []
+        assert str(window.key_status_label["text"]) == "검증 중..."
+        assert str(window.test_key_button["state"]) == "disabled"
+        assert len(scheduled) == 1  # rescheduled itself instead of giving up
+
+        # Click 2's own probe now finishes and is displayed normally.
+        second_work()
+        scheduled.pop(0)()
+        assert captured and captured[-1] == ("info", ("키 검증", "두 번째(최신) 결과"))
+        assert str(window.key_status_label["foreground"]) == "green"
+        assert str(window.test_key_button["state"]) == "normal"
     finally:
         root.destroy()
 

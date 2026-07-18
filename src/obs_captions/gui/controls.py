@@ -8,6 +8,7 @@ monkeypatch it there; everything here is independently unit-testable.
 
 from __future__ import annotations
 
+import queue
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -66,6 +67,19 @@ def open_folder_command(folder: str, platform: str = sys.platform) -> list[str]:
     return ["xdg-open", folder]
 
 
+def drain_queue(q: queue.Queue[Any]) -> None:
+    """Discard every item currently sitting in ``q`` without blocking.
+
+    Used to clear a stale, unconsumed result left by a superseded request
+    before starting a new one on the same shared queue.
+    """
+    while not q.empty():
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            break
+
+
 __all__ = [
     "result_color",
     "current_key_widget",
@@ -73,4 +87,5 @@ __all__ = [
     "format_recommendation",
     "config_folder",
     "open_folder_command",
+    "drain_queue",
 ]

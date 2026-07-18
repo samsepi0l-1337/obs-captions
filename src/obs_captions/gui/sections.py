@@ -129,6 +129,47 @@ def _make_visibility_applier(
     return apply
 
 
+def _wheel_step(event: Any) -> int:
+    """Return the ``yview_scroll`` step (+1/-1) for a wheel event.
+
+    Windows/macOS deliver ``<MouseWheel>`` with a signed ``delta``; X11/Linux
+    has no delta at all and instead sends ``<Button-4>`` (scroll up) /
+    ``<Button-5>`` (scroll down) button-press events, distinguished by
+    ``event.num``.
+    """
+    delta = getattr(event, "delta", 0)
+    if delta:
+        return -1 if delta > 0 else 1
+    return -1 if getattr(event, "num", 0) == 4 else 1
+
+
+def _scroll_target_canvas(widget: Any) -> tk.Canvas | None:
+    """Walk ``widget``'s master chain up to its owning scrollable Canvas."""
+    while widget is not None:
+        if isinstance(widget, tk.Canvas):
+            return widget
+        widget = getattr(widget, "master", None)
+    return None
+
+
+def _on_wheel_anywhere(event: Any) -> None:
+    """Route a wheel event to whichever tab's Canvas actually owns it.
+
+    Bound globally (see :func:`_make_scrollable_tab`) rather than only while
+    the pointer sits directly over the Canvas: moving onto a child input
+    widget (Entry/Combobox/...) fires a plain ``<Enter>`` into that child, and
+    on macOS Aqua Tk crossing events carry no ``detail`` field at all — so an
+    Enter/Leave-based unbind (or a "NotifyInferior" check, which only exists
+    on X11) cannot reliably distinguish "moved to a child" from "moved away
+    entirely" and ends up disabling scroll over most of the tab's own input
+    widgets. Resolving the target from the actual event widget instead works
+    uniformly across backends and needs no bind/unbind toggling at all.
+    """
+    canvas = _scroll_target_canvas(event.widget)
+    if canvas is not None:
+        canvas.yview_scroll(_wheel_step(event), "units")
+
+
 def _make_scrollable_tab(notebook: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
     """Return ``(page, content)`` where ``page`` is the Notebook tab and
     ``content`` is a vertically-scrollable inner frame to grid fields into.
@@ -155,13 +196,13 @@ def _make_scrollable_tab(notebook: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
-    def _on_wheel(event: Any) -> None:
-        delta = event.delta
-        step = -1 if delta > 0 else 1
-        canvas.yview_scroll(step, "units")
-
-    content.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
-    content.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+    # Global, not Enter/Leave-gated: ``_on_wheel_anywhere`` resolves the
+    # correct Canvas per-event from the actual widget under the pointer, so
+    # scrolling works over input widgets too (see its docstring). Rebinding
+    # per tab is harmless — the handler is stateless and always dynamic.
+    canvas.bind_all("<MouseWheel>", _on_wheel_anywhere)
+    canvas.bind_all("<Button-4>", _on_wheel_anywhere)
+    canvas.bind_all("<Button-5>", _on_wheel_anywhere)
     return page, content
 
 
