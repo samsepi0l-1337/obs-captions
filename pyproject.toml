@@ -8,7 +8,7 @@ version = "0.1.4"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi",
-    "uvicorn[standard]",
+    "uvicorn",
     "websockets",
     "pydantic>=2",
     "pydantic-settings",
