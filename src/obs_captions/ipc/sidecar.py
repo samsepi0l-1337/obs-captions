@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import os
-import struct
 import sys
 import threading
 from collections import deque
@@ -83,12 +82,6 @@ class _WriteProtocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport
         self.ready.set()
-
-
-def _samples_to_pcm16(samples: list[int]) -> bytes:
-    if not samples:
-        return b""
-    return struct.pack("<" + "h" * len(samples), *samples)
 
 
 class SidecarRuntime:
@@ -268,7 +261,7 @@ class SidecarRuntime:
             self._dropped_inbound += 1
             return
 
-        pcm16 = _samples_to_pcm16(audio.samples)
+        pcm16 = audio.pcm
         item = _QueuedAudio(
             epoch=epoch,
             timestamp_ns=audio.timestamp_ns,

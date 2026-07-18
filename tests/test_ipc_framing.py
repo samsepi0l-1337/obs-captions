@@ -6,6 +6,7 @@ import zlib
 import pytest
 
 from obs_captions.ipc.framing import (
+    Audio,
     FrameDecoder,
     FrameError,
     NeedMoreData,
@@ -264,3 +265,36 @@ def test_version_mismatch_rejected():
     )
     with pytest.raises(FrameError):
         decode_frame(bytes(corrupted))
+
+
+@pytest.mark.parametrize(
+    "samples",
+    [[], [0], [10, -20, 30], [1, -2, 300, 0, -400], [32767, -32768, 0]],
+)
+def test_audio_samples_property_roundtrip(samples):
+    frame = encode_audio(timestamp_ns=1003, sample_count=len(samples), samples=samples)
+    _, msg_type, payload = decode_frame(frame)
+    assert msg_type == MsgType.AUDIO
+    # Decode holds raw PCM16 bytes and derives ``samples`` lazily.
+    assert payload.pcm == frame[28:]
+    assert payload.samples == samples
+    # Cached after first access; identical bytes on re-encode.
+    assert payload.samples is payload.samples
+    assert encode_audio(1003, len(samples), payload.samples) == frame
+
+
+def test_audio_lazy_samples_not_materialized_until_accessed():
+    audio = Audio.from_pcm(1, 3, struct.pack("<3h", 10, -20, 30))
+    assert audio._samples_cache is None
+    assert audio.samples == [10, -20, 30]
+    assert audio._samples_cache == [10, -20, 30]
+
+
+def test_audio_legacy_constructor_matches_pcm():
+    pcm = struct.pack("<2h", 5, -5)
+    legacy = Audio(9, 2, [5, -5])
+    from_pcm = Audio.from_pcm(9, 2, pcm)
+    from_samples = Audio.from_samples(9, 2, [5, -5])
+    assert legacy.pcm == pcm == from_pcm.pcm == from_samples.pcm
+    assert legacy.samples == from_pcm.samples == [5, -5]
+    assert legacy == from_pcm == from_samples
