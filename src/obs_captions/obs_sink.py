@@ -1,19 +1,31 @@
 """Path B sink: obs-websocket v5 → native OBS Text source.
 
-Client: simpleobsws (async-native, no run_in_executor needed).
-Doc source: https://context7.com/irltoolkit/simpleobsws/llms.txt
-Request shapes (GetInputList/CreateInput/SetInputSettings) are built inline in
-``_ensure_source_exists`` and ``_try_set_text``.
+Client: simpleobsws (async-native, no run_in_executor needed). The client
+Protocols, request builders, production client factory, and the task-cancel
+helper live in ``obs_ws_client`` and are re-exported here so existing import
+paths keep working. Request shapes (GetInputList/CreateInput/SetInputSettings)
+are built inline in ``_ensure_source_exists`` and ``_try_set_text``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from obs_captions.obs_display import _build_display_text
+from obs_captions.obs_ws_client import (
+    _Request as _Request,  # re-exported for tests / import compat
+)
+from obs_captions.obs_ws_client import (
+    _WsResponse as _WsResponse,  # re-exported for tests / import compat
+)
+from obs_captions.obs_ws_client import (
+    _build_production_client,
+    _cancel_and_await,
+    _make_production_request,
+    _WsClient,
+)
 
 if TYPE_CHECKING:
     from obs_captions.config import AppConfig
@@ -23,49 +35,6 @@ logger = logging.getLogger(__name__)
 
 _TEXT_KIND = "text_ft2_source_v2"
 _DEFAULT_SCENE = "Scene"  # fallback scene for CreateInput
-
-
-# Minimal Request dataclass — compatible with simpleobsws.Request; used so tests
-# never need simpleobsws installed.
-@dataclass
-class _Request:
-    requestType: str
-    requestData: dict[str, Any] = field(default_factory=dict)
-
-
-# Protocols — let tests inject a fake without importing simpleobsws.
-@runtime_checkable
-class _WsResponse(Protocol):
-    def ok(self) -> bool: ...
-
-    responseData: dict[str, Any]
-
-
-@runtime_checkable
-class _WsClient(Protocol):
-    async def connect(self) -> bool: ...
-    async def wait_until_identified(self, timeout: float = 10) -> bool: ...
-    async def call(self, request: Any) -> _WsResponse: ...
-    async def disconnect(self) -> None: ...
-
-
-def _build_production_client(url: str, password: str) -> _WsClient:
-    # Production client factory — only called when no client is injected.
-    try:
-        import simpleobsws  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError("simpleobsws not installed. Run: uv sync --extra obs") from exc
-    return simpleobsws.WebSocketClient(url=url, password=password)  # type: ignore[return-value]
-
-
-def _make_production_request(request_type: str, data: dict[str, Any] | None = None) -> Any:
-    """Build a request using simpleobsws.Request when available, else _Request (duck-typed)."""
-    try:
-        import simpleobsws  # type: ignore[import-untyped]
-
-        return simpleobsws.Request(request_type, data or {})
-    except ImportError:
-        return _Request(requestType=request_type, requestData=data or {})
 
 
 # ---------------------------------------------------------------------------
@@ -372,21 +341,3 @@ class ObsTextSink:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SetInputSettings failed: %s", exc)
             return False
-
-
-# ---------------------------------------------------------------------------
-# Pure helpers
-# ---------------------------------------------------------------------------
-
-
-async def _cancel_and_await(task: asyncio.Task[None] | None) -> None:
-    """Cancel task; swallow CancelledError/faults (faults already logged by done-cb)."""
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    except Exception:  # noqa: BLE001
-        pass
