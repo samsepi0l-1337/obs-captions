@@ -56,6 +56,64 @@ def test_sections_cover_expected_gui_tabs():
         root.destroy()
 
 
+def test_tab_content_column_expands():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        for frame in registry["frames"].values():
+            # Column 1 (inputs) must expand so sticky="ew" widgets stretch.
+            assert int(frame.grid_columnconfigure(1)["weight"]) == 1
+    finally:
+        root.destroy()
+
+
+def test_each_tab_is_scrollable_canvas():
+    import tkinter as tk
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        for page in registry["tab_pages"].values():
+            canvases = [c for c in page.winfo_children() if isinstance(c, tk.Canvas)]
+            scrollbars = [c for c in page.winfo_children() if isinstance(c, ttk.Scrollbar)]
+            assert canvases, "each tab must wrap its fields in a scroll Canvas"
+            assert scrollbars, "each tab must expose a vertical scrollbar"
+    finally:
+        root.destroy()
+
+
+def test_recommend_row_sits_just_below_model_size():
+    from tkinter import ttk
+
+    from obs_captions.gui import config_io, sections
+
+    root = _root()
+    try:
+        nb = ttk.Notebook(root)
+        values = config_io.load_settings(None, None)
+        registry: dict = {}
+        sections.build_sections(nb, values, registry=registry)
+        model_row = int(registry["field_widgets"]["local.model_size"][2].widget.grid_info()["row"])
+        rec_row = registry["recommend_row"]
+        # Reserved slot is directly below the model box, not dumped at the bottom.
+        assert model_row < rec_row <= model_row + 2
+    finally:
+        root.destroy()
+
+
 class _Stub:
     def __init__(self, value: str):
         self._value = value

@@ -174,6 +174,98 @@ def test_key_test_button_unsupported(monkeypatch):
         root.destroy()
 
 
+def test_key_test_button_recovers_when_probe_raises(monkeypatch):
+    from obs_captions.gui import app as app_mod
+    from obs_captions.gui.app import build_app
+
+    captured: list[tuple] = []
+    monkeypatch.setattr(app_mod, "_run_in_background", lambda fn: fn())
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(app_mod.validate, "validate_engine", _boom)
+    monkeypatch.setattr(app_mod.messagebox, "showwarning", lambda *a, **k: captured.append(a))
+
+    root = _root()
+    root.after = lambda _delay, fn=None, *a: fn(*a) if fn else None
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        window.engine_widget.set("openai")
+        window.test_key_button.invoke()
+        # A crashing probe must not wedge the button disabled forever.
+        assert str(window.test_key_button["state"]) == "normal"
+        assert captured  # user was warned
+    finally:
+        root.destroy()
+
+
+def test_open_folder_button_present_and_runs_command(monkeypatch, tmp_path):
+    from obs_captions.gui import app as app_mod
+    from obs_captions.stt.hardware import HardwareInfo
+
+    # Keep the background hardware probe from issuing its own Popen calls.
+    fake = HardwareInfo(cuda_available=False, vram_mb=None, ram_mb=8000, cpu_count=8)
+    monkeypatch.setattr(app_mod, "_detect_recommendation", lambda: ("medium", fake))
+
+    calls: list = []
+    monkeypatch.setattr(app_mod.subprocess, "Popen", lambda cmd, *a, **k: calls.append(cmd))
+
+    root = _root()
+    try:
+        cfg = tmp_path / "config.toml"
+        window = app_mod.build_app(root, runner=_FakeRunner(), config_path=cfg, env_path=None)
+        assert window.open_folder_button is not None
+        window.open_folder_button.invoke()
+        assert any(str(tmp_path) in " ".join(cmd) for cmd in calls)
+    finally:
+        root.destroy()
+
+
+def test_controls_split_into_two_rows():
+    from obs_captions.gui.app import build_app
+
+    root = _root()
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        # Run controls (Start) and auxiliary controls (open folder) live in
+        # different frames so a 640px window never clips them onto one line.
+        assert window.start_button.master is not window.open_folder_button.master
+        assert window.advanced_check.master is window.open_folder_button.master
+    finally:
+        root.destroy()
+
+
+def test_close_protocol_stops_running_child():
+    from obs_captions.gui.app import build_app
+
+    root = _root()
+    try:
+        build_app(root, runner=_FakeRunner())
+        # WM_DELETE_WINDOW must be wired so closing never orphans the child.
+        assert str(root.protocol("WM_DELETE_WINDOW")) != ""
+    finally:
+        root.destroy()
+
+
+def test_recommendation_widgets_sit_above_bottom(monkeypatch):
+    from obs_captions.gui import app as app_mod
+    from obs_captions.gui.app import build_app
+    from obs_captions.stt.hardware import HardwareInfo
+
+    fake = HardwareInfo(cuda_available=True, vram_mb=16000, ram_mb=32000, cpu_count=16)
+    monkeypatch.setattr(app_mod, "_detect_recommendation", lambda: ("large-v3-turbo", fake))
+
+    root = _root()
+    try:
+        window = build_app(root, runner=_FakeRunner())
+        rec_row = int(window.recommend_label.grid_info()["row"])
+        # Placed near the model box, not dumped at the old row=100 bottom.
+        assert rec_row < 100
+    finally:
+        root.destroy()
+
+
 def test_stop_button_disabled_initially():
     from obs_captions.gui.app import build_app
 

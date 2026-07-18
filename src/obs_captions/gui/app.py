@@ -8,6 +8,7 @@ CLI's no-args dispatch (see ``obs_captions.cli``).
 from __future__ import annotations
 
 import queue
+import subprocess
 import threading
 import tkinter as tk
 from dataclasses import dataclass, field
@@ -19,6 +20,12 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from obs_captions.gui import config_io, sections
+from obs_captions.gui.controls import config_folder as _config_folder
+from obs_captions.gui.controls import current_key_widget as _current_key_widget
+from obs_captions.gui.controls import detect_recommendation as _detect_recommendation
+from obs_captions.gui.controls import format_recommendation as _format_recommendation
+from obs_captions.gui.controls import open_folder_command as _open_folder_command
+from obs_captions.gui.controls import result_color as _result_color
 from obs_captions.gui.runner import CaptionRunner
 from obs_captions.gui.widgets import ChoiceBox
 from obs_captions.stt import validate
@@ -50,6 +57,7 @@ class AppWindow:
     engine_widget: ChoiceBox | None = None
     test_key_button: ttk.Button | None = None
     key_status_label: ttk.Label | None = None
+    open_folder_button: ttk.Button | None = None
     collectors: dict[str, Any] = field(default_factory=dict)
 
 
@@ -63,34 +71,6 @@ def _collect_all(collectors: dict[str, Any]) -> dict[str, Any]:
 def _run_in_background(fn: Any) -> None:
     """Run ``fn`` on a daemon thread (indirection so tests can run it inline)."""
     threading.Thread(target=fn, daemon=True).start()
-
-
-def _result_color(result: validate.ValidationResult) -> str:
-    if result.ok:
-        return "green"
-    if result.mode == "unsupported":
-        return "gray"
-    return "red"
-
-
-def _current_key_widget(registry: dict[str, Any], engine: str) -> Any | None:
-    for field_spec, _label, widget, _help in registry.get("field_widgets", {}).values():
-        if field_spec.widget == "secret" and engine in field_spec.engines:
-            return widget
-    return None
-
-
-def _detect_recommendation() -> tuple[str, HardwareInfo]:
-    """Probe hardware and return ``(recommended_model, hardware_info)`` (IO)."""
-    from obs_captions.stt.hardware import detect_hardware, recommend_model
-
-    info = detect_hardware()
-    return recommend_model(info), info
-
-
-def _format_recommendation(model: str, info: HardwareInfo) -> str:
-    detected = f"GPU {info.vram_mb}MB" if info.vram_mb is not None else "CPU"
-    return f"추천: {model} (감지: {detected})"
 
 
 def _wire_model_recommendation(
@@ -108,11 +88,12 @@ def _wire_model_recommendation(
         return None, None
     model_widget = entry[2]
     parent = model_widget.widget.master
+    rec_row = registry.get("recommend_row", 100)
 
     rec_label = ttk.Label(
         parent, text="추천 모델 계산 중...", foreground="gray", font=("TkDefaultFont", 8)
     )
-    rec_label.grid(row=100, column=0, columnspan=2, sticky="w")
+    rec_label.grid(row=rec_row, column=0, columnspan=2, sticky="w", padx=4)
     pending: dict[str, str | None] = {"model": None}
 
     def _apply() -> None:
@@ -120,7 +101,7 @@ def _wire_model_recommendation(
             model_widget.set(pending["model"])
 
     apply_button = ttk.Button(parent, text="추천값 적용", command=_apply, state="disabled")
-    apply_button.grid(row=101, column=0, sticky="w")
+    apply_button.grid(row=rec_row + 1, column=0, sticky="w", padx=4, pady=2)
 
     result_q: queue.Queue[tuple[str, HardwareInfo] | None] = queue.Queue(maxsize=1)
 
@@ -163,11 +144,15 @@ def _wire_key_test(
     status_label = ttk.Label(controls, text="", foreground="gray")
     result_q: queue.Queue[validate.ValidationResult] = queue.Queue(maxsize=1)
 
-    def _poll() -> None:
+    def _poll(remaining: int = 100) -> None:
         try:
             result = result_q.get_nowait()
         except queue.Empty:
-            root.after(100, _poll)
+            if remaining > 0:
+                root.after(100, lambda: _poll(remaining - 1))
+            else:  # bounded retries: never leave the button permanently disabled
+                status_label.config(text="검증 시간이 초과되었습니다.", foreground="red")
+                test_button.config(state="normal")
             return
         status_label.config(text=result.message, foreground=_result_color(result))
         if result.ok:
@@ -188,7 +173,12 @@ def _wire_key_test(
         status_label.config(text="검증 중...", foreground="gray")
 
         def _work() -> None:
-            result_q.put(validate.validate_engine(engine, api_key))
+            try:
+                result_q.put(validate.validate_engine(engine, api_key))
+            except Exception:  # noqa: BLE001 - a probe crash must not wedge the button
+                result_q.put(
+                    validate.ValidationResult(False, "network", "검증 중 오류가 발생했습니다.")
+                )
 
         _run_in_background(_work)
         root.after(100, _poll)
@@ -218,8 +208,12 @@ def build_app(
     registry: dict[str, Any] = {}
     collectors = sections.build_sections(notebook, values, registry=registry)
 
+    # Two control rows so a 640px-wide window never clips: primary run controls
+    # on top, secondary/advanced helpers below.
     controls = ttk.Frame(root)
-    controls.pack(fill="x")
+    controls.pack(fill="x", padx=4, pady=(4, 0))
+    controls2 = ttk.Frame(root)
+    controls2.pack(fill="x", padx=4, pady=(0, 4))
 
     show_advanced_var = tk.BooleanVar(value=False)
 
@@ -229,12 +223,22 @@ def build_app(
             apply_visibility(show_advanced=show_advanced_var.get())
 
     advanced_check = ttk.Checkbutton(
-        controls, text="고급 설정 표시", variable=show_advanced_var, command=_on_toggle_advanced
+        controls2, text="고급 설정 표시", variable=show_advanced_var, command=_on_toggle_advanced
     )
     advanced_check.pack(side="left")
 
     recommend_label, apply_recommend_button = _wire_model_recommendation(root, registry)
-    test_key_button, key_status_label = _wire_key_test(controls, root, registry)
+    test_key_button, key_status_label = _wire_key_test(controls2, root, registry)
+
+    def _on_open_folder() -> None:
+        command = _open_folder_command(str(_config_folder(config_path)))
+        try:
+            subprocess.Popen(command)
+        except OSError as exc:
+            messagebox.showerror("폴더 열기 실패", str(exc))
+
+    open_folder_button = ttk.Button(controls2, text="설정 폴더 열기", command=_on_open_folder)
+    open_folder_button.pack(side="left", padx=4)
 
     ttk.Label(controls, text="Sink").pack(side="left")
     sink_choice = ChoiceBox(controls, _SINK_CHOICES, "browser")
@@ -305,6 +309,15 @@ def build_app(
     start_button = ttk.Button(controls, text="Start", command=on_start)
     start_button.pack(side="right")
 
+    def _on_close() -> None:
+        # Never orphan a live caption child when the window is closed.
+        if active_runner.is_running():
+            active_runner.stop()
+        root.destroy()
+
+    if hasattr(root, "protocol"):
+        root.protocol("WM_DELETE_WINDOW", _on_close)
+
     return AppWindow(
         root=root,
         notebook=notebook,
@@ -320,6 +333,7 @@ def build_app(
         engine_widget=registry.get("engine_widget"),
         test_key_button=test_key_button,
         key_status_label=key_status_label,
+        open_folder_button=open_folder_button,
         collectors=collectors,
     )
 
