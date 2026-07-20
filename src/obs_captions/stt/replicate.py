@@ -3,30 +3,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import inspect
-import io
 import os
-import wave
 from collections.abc import Callable
 
 import httpx
 
-from obs_captions.stt.utterance import UtteranceBackend
+from obs_captions.stt.utterance import UtteranceBackend, _pcm16_to_wav_bytes
 
 _PREDICTIONS_URL = "https://api.replicate.com/v1/predictions"
 _DEFAULT_MODEL = "openai/whisper"
 _DEFAULT_VERSION = "e39e354773466b955265e969568deb7da217804d58f9a5274ffd17e"
 _POLL_INTERVAL = 1.0
 _MAX_POLLS = 120
-
-
-def _pcm16_to_wav_bytes(pcm16: bytes, sample_rate: int = 16000, channels: int = 1) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm16)
-    return buf.getvalue()
 
 
 class ReplicateBackend(UtteranceBackend):
@@ -42,7 +30,7 @@ class ReplicateBackend(UtteranceBackend):
         sleep_fn: Callable[[float], object] | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__(http_client=http_client, **kwargs)  # type: ignore[arg-type]
         self.model = model
         self.version = version
         self._api_key = api_key or os.environ.get("REPLICATE_API_TOKEN") or ""
@@ -51,21 +39,8 @@ class ReplicateBackend(UtteranceBackend):
                 "REPLICATE_API_TOKEN is required for ReplicateBackend. "
                 "Set it in .env or pass api_key=."
             )
-        self._http_client = http_client
-        self._owns_client = http_client is None
         # Injectable sleep for testing; defaults to asyncio.sleep
         self._sleep_fn: Callable[[float], object] = sleep_fn or asyncio.sleep
-
-    async def _client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient()
-        return self._http_client
-
-    async def stop_stream(self) -> None:
-        await super().stop_stream()
-        if self._owns_client and self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"}
