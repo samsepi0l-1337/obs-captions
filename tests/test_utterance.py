@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
+import wave
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from obs_captions.stt.base import Transcript
-from obs_captions.stt.utterance import UtteranceBackend
+from obs_captions.stt.utterance import UtteranceBackend, _pcm16_to_wav_bytes
 
 
 class _FakeUtterance(UtteranceBackend):
@@ -119,3 +123,70 @@ async def test_flush_emits_partial_while_transcribing():
     await backend.flush()
 
     assert any(t.text == "…" for t in partials)
+
+
+# --- Shared WAV encoder (promoted from openrouter/replicate) ---
+
+
+def test_pcm16_to_wav_bytes_produces_valid_wav_container():
+    pcm = b"\x01\x02\x03\x04" * 8
+    wav_bytes = _pcm16_to_wav_bytes(pcm, sample_rate=16000)
+
+    assert wav_bytes[:4] == b"RIFF"
+    assert wav_bytes[8:12] == b"WAVE"
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        assert wf.getnchannels() == 1
+        assert wf.getsampwidth() == 2
+        assert wf.getframerate() == 16000
+        assert wf.readframes(wf.getnframes()) == pcm
+
+
+def test_pcm16_to_wav_bytes_is_deterministic():
+    pcm = b"\x10\x20" * 50
+    assert _pcm16_to_wav_bytes(pcm, 16000) == _pcm16_to_wav_bytes(pcm, 16000)
+
+
+# --- Shared HTTP client lifecycle (promoted to UtteranceBackend) ---
+
+
+@pytest.mark.asyncio
+async def test_client_lazily_creates_owned_client():
+    backend = _make_backend()
+    assert backend._http_client is None
+    assert backend._owns_client is True
+    client = await backend._client()
+    assert client is not None
+    # Second call reuses the same instance (no double-create).
+    assert await backend._client() is client
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_closes_owned_client():
+    backend = _make_backend()
+    mock_client = MagicMock()
+    mock_client.aclose = AsyncMock()
+    backend._http_client = mock_client
+    backend._owns_client = True
+
+    await backend.stop_stream()
+
+    mock_client.aclose.assert_awaited_once()
+    assert backend._http_client is None
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_leaves_injected_client_open():
+    mock_client = MagicMock()
+    mock_client.aclose = AsyncMock()
+    backend = _FakeUtterance(
+        language="ko",
+        on_partial=_noop,
+        on_final=_noop,
+        http_client=mock_client,
+    )
+    assert backend._owns_client is False
+
+    await backend.stop_stream()
+
+    mock_client.aclose.assert_not_called()
+    assert backend._http_client is mock_client

@@ -9,9 +9,16 @@ from collections import deque
 from dataclasses import dataclass
 
 from obs_captions.config import load_config
+from obs_captions.ipc.control_dispatcher import (
+    CONTROL_FLUSH,
+    CONTROL_RECONFIGURE,
+    CONTROL_START,
+    CONTROL_STOP,
+    ControlDispatcher,
+    _QueuedControl,
+)
 from obs_captions.ipc.framing import (
     Audio,
-    Control,
     FrameDecoder,
     FrameError,
     MsgType,
@@ -30,25 +37,11 @@ from obs_captions.stt.registry import backend_cpu_bound, create_backend
 _offload_thread_state = threading.local()
 
 
-CONTROL_START = 1
-CONTROL_STOP = 2
-CONTROL_FLUSH = 3
-CONTROL_RECONFIGURE = 4
-CONTROL_COMMANDS = (CONTROL_START, CONTROL_STOP, CONTROL_FLUSH, CONTROL_RECONFIGURE)
-
-
 @dataclass
 class _QueuedAudio:
     epoch: int
     timestamp_ns: int
     pcm16: bytes
-
-
-@dataclass
-class _QueuedControl:
-    command: int
-    seq: int
-    arg: str
 
 
 class _AsyncWriter:
@@ -127,25 +120,13 @@ class SidecarRuntime:
         self._out_lock = threading.Lock()
         self._dropped_outbound = 0
 
-        self._control_slots: dict[int, _QueuedControl | None] = {
-            CONTROL_START: None,
-            CONTROL_STOP: None,
-            CONTROL_FLUSH: None,
-            CONTROL_RECONFIGURE: None,
-        }
-        self._control_inflight: dict[int, int | None] = {
-            CONTROL_START: None,
-            CONTROL_STOP: None,
-            CONTROL_FLUSH: None,
-            CONTROL_RECONFIGURE: None,
-        }
-        self._control_last_seq: dict[int, int] = {
-            CONTROL_START: -1,
-            CONTROL_STOP: -1,
-            CONTROL_FLUSH: -1,
-            CONTROL_RECONFIGURE: -1,
-        }
-        self._control_lock = threading.Lock()
+        self._control = ControlDispatcher(
+            enqueue_status=self._enqueue_status,
+            run_control=self._run_control,
+            has_session_context=lambda: self._session_has_context,
+            is_session_active=lambda: self._session_active,
+            has_backend=lambda: self._backend is not None,
+        )
 
         self._reader_done = threading.Event()
         self._reader_exception: Exception | None = None
@@ -236,7 +217,7 @@ class SidecarRuntime:
                     elif msg_type == MsgType.AUDIO:
                         self._enqueue_audio(payload)
                     elif msg_type == MsgType.CONTROL:
-                        self._enqueue_control(payload)
+                        self._control.enqueue(payload)
             except NeedMoreData:
                 continue
             except FrameError as exc:
@@ -274,47 +255,13 @@ class SidecarRuntime:
                 self._dropped_inbound += 1
             self._audio_queue.append(item)
 
-    def _enqueue_control(self, control: Control) -> None:
-        if control.command not in CONTROL_COMMANDS:
-            self._enqueue_status(StatusCode.RUNTIME_ERROR, control.seq, "unknown control command")
-            return
-
-        with self._control_lock:
-            if not self._session_has_context:
-                self._enqueue_status(StatusCode.NO_SESSION, control.seq, "no session")
-                return
-
-            if self._control_inflight[control.command] is not None:
-                if self._control_inflight[control.command] == control.seq:
-                    self._enqueue_status(StatusCode.OK, control.seq, "ack")
-                    return
-                self._enqueue_status(StatusCode.CANCELLED, control.seq, "superseded")
-                return
-
-            last_seq = self._control_last_seq[control.command]
-            if control.seq == last_seq:
-                self._enqueue_status(StatusCode.OK, control.seq, "ack")
-                return
-            if control.seq < last_seq:
-                self._enqueue_status(StatusCode.CANCELLED, control.seq, "superseded")
-                return
-
-            prior = self._control_slots[control.command]
-            if prior is not None:
-                self._enqueue_status(StatusCode.CANCELLED, prior.seq, "superseded")
-            self._control_slots[control.command] = _QueuedControl(
-                command=control.command,
-                seq=control.seq,
-                arg=control.arg,
-            )
-
     async def _control_and_hello_loop(self) -> None:
         while True:
             if self._stopped:
                 return
 
             await self._drain_hello_once()
-            await self._drain_control_once()
+            await self._control.drain_once()
 
             if self._should_stop():
                 self._stopped = True
@@ -360,7 +307,7 @@ class SidecarRuntime:
             self._session_path = config_path
             self._session_has_context = False
             self._enqueue_status(StatusCode.CONFIG_ERROR, ack_seq, f"config load failed: {exc}")
-            self._clear_pending_controls()
+            self._control.clear_pending()
             return False
 
         token = self._session_token + 1
@@ -375,7 +322,7 @@ class SidecarRuntime:
         except Exception as exc:
             self._session_has_context = False
             self._enqueue_status(StatusCode.ENGINE_INIT_FAIL, ack_seq, str(exc))
-            self._clear_pending_controls()
+            self._control.clear_pending()
             return False
 
         with self._supports_partial_lock:
@@ -386,7 +333,7 @@ class SidecarRuntime:
         except Exception as exc:
             self._session_has_context = False
             self._enqueue_status(StatusCode.ENGINE_INIT_FAIL, ack_seq, str(exc))
-            self._clear_pending_controls()
+            self._control.clear_pending()
             return False
 
         with self._supports_partial_lock:
@@ -415,47 +362,6 @@ class SidecarRuntime:
         )
         self._enqueue_status(StatusCode.OK, 0, "ready")
         return True
-
-    async def _drain_control_once(self) -> None:
-        for command in CONTROL_COMMANDS:
-            control = None
-            with self._control_lock:
-                if self._control_inflight[command] is not None:
-                    continue
-                control = self._control_slots[command]
-                if control is None:
-                    continue
-                self._control_slots[command] = None
-                self._control_inflight[command] = control.seq
-
-            if control is None:
-                continue
-
-            if (
-                control.command in (CONTROL_FLUSH, CONTROL_RECONFIGURE)
-                and self._backend is None
-            ):
-                if self._session_has_context and not self._session_active:
-                    with self._control_lock:
-                        self._control_slots[command] = control
-                        self._control_inflight[command] = None
-                    await asyncio.sleep(0.001)
-                    continue
-
-                with self._control_lock:
-                    self._control_inflight[command] = None
-
-                self._enqueue_status(StatusCode.NO_SESSION, control.seq, "no session")
-                continue
-
-            try:
-                await self._run_control(control)
-            except Exception as exc:  # noqa: BLE001
-                self._enqueue_status(StatusCode.RUNTIME_ERROR, control.seq, str(exc))
-            finally:
-                with self._control_lock:
-                    self._control_last_seq[command] = control.seq
-                    self._control_inflight[command] = None
 
     async def _run_control(self, control: _QueuedControl) -> None:
         if control.command == CONTROL_START:
@@ -486,7 +392,7 @@ class SidecarRuntime:
         self._session_has_context = False
         self._pending_hello_epoch = None
 
-        self._clear_pending_controls()
+        self._control.clear_pending()
         self._enqueue_status(StatusCode.OK, control.seq, "ack")
 
     async def _handle_flush(self, control: _QueuedControl) -> None:
@@ -566,15 +472,6 @@ class SidecarRuntime:
             if not self._audio_queue:
                 return None
             return self._audio_queue.popleft()
-
-    def _clear_pending_controls(self) -> None:
-        for command in CONTROL_COMMANDS:
-            with self._control_lock:
-                pending = self._control_slots.get(command)
-                self._control_slots[command] = None
-                self._control_inflight[command] = None
-            if pending is not None:
-                self._enqueue_status(StatusCode.CANCELLED, pending.seq, "cancelled")
 
     def _prune_audio_for_epoch(self, epoch: int) -> None:
         with self._audio_lock:
@@ -665,12 +562,8 @@ class SidecarRuntime:
             if self._hello_queue:
                 return False
 
-        with self._control_lock:
-            for item in self._control_slots.values():
-                if item is not None:
-                    return False
-            if any(seq is not None for seq in self._control_inflight.values()):
-                return False
+        if self._control.has_pending():
+            return False
 
         with self._out_lock:
             if self._out_queue:

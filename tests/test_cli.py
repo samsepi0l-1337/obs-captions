@@ -1331,3 +1331,40 @@ async def test_serve_wiring_with_demo(tmp_path, monkeypatch):
     # demo=True: FakeBackend runs an infinite loop as demo_task; serve() returns
     # immediately; finally: cancels demo_task, suppress(CancelledError) absorbs it.
     await _serve(None, demo=True)
+
+
+# _resolve_vad_params tests (pure config->VAD params mapping)
+
+
+def test_resolve_vad_params_local_uses_local_config():
+    """engine='local' pulls threshold/min_silence from config.local tuning."""
+    from obs_captions.app_runner import _resolve_vad_params
+    from obs_captions.config import AppConfig, LocalConfig
+
+    config = AppConfig(
+        engine="local",
+        local=LocalConfig(vad_threshold=0.7, min_silence_ms=300),
+    )
+
+    params = _resolve_vad_params(config)
+
+    assert params.threshold == 0.7
+    assert params.min_silence_ms == 300
+    assert params.frame_ms == 100
+
+
+def test_resolve_vad_params_non_local_uses_defaults():
+    """A non-local engine ignores config.local and uses fixed cloud defaults."""
+    from obs_captions.app_runner import _resolve_vad_params
+    from obs_captions.config import AppConfig, LocalConfig
+
+    config = AppConfig(
+        engine="openai",
+        local=LocalConfig(vad_threshold=0.9, min_silence_ms=999),
+    )
+
+    params = _resolve_vad_params(config)
+
+    assert params.threshold == 0.5
+    assert params.min_silence_ms == 500
+    assert params.frame_ms == 100

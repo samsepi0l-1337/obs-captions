@@ -4,8 +4,7 @@ import os
 
 import httpx
 
-from obs_captions.stt.openrouter import _pcm16_to_wav_bytes
-from obs_captions.stt.utterance import UtteranceBackend
+from obs_captions.stt.utterance import UtteranceBackend, _pcm16_to_wav_bytes
 
 _ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 _DEFAULT_MODEL = "whisper-large-v3-turbo"
@@ -29,7 +28,7 @@ class GroqBackend(UtteranceBackend):
         http_client: httpx.AsyncClient | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__(http_client=http_client, **kwargs)  # type: ignore[arg-type]
         self.model = model
         self._api_key = api_key or os.environ.get("GROQ_API_KEY") or ""
         if not self._api_key:
@@ -37,19 +36,6 @@ class GroqBackend(UtteranceBackend):
                 "GROQ_API_KEY is required for GroqBackend. "
                 "Set it in .env or pass api_key=."
             )
-        self._http_client = http_client
-        self._owns_client = http_client is None
-
-    async def _client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient()
-        return self._http_client
-
-    async def stop_stream(self) -> None:
-        await super().stop_stream()
-        if self._owns_client and self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
 
     async def transcribe(self, pcm16: bytes, language: str) -> str:
         wav_bytes = _pcm16_to_wav_bytes(pcm16, self.sample_rate)

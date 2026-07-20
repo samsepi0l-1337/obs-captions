@@ -5,11 +5,33 @@ import contextlib
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from obs_captions.config import load_config
 from obs_captions.stt import FakeBackend
 from obs_captions.stt.registry import create_backend as _default_create_backend
+
+
+class VadParams(NamedTuple):
+    """Resolved VAD segmenter parameters (threshold, min_silence_ms, frame_ms)."""
+
+    threshold: float
+    min_silence_ms: int
+    frame_ms: int = 100
+
+
+def _resolve_vad_params(config: Any) -> VadParams:
+    """Map ``config`` to VAD segmenter params.
+
+    The ``local`` engine uses the tuned ``config.local`` values; every other
+    (cloud) engine uses fixed defaults, since those backends do their own VAD.
+    """
+    if config.engine == "local":
+        return VadParams(
+            threshold=config.local.vad_threshold,
+            min_silence_ms=config.local.min_silence_ms,
+        )
+    return VadParams(threshold=0.5, min_silence_ms=500)
 
 
 def make_capture(
@@ -213,15 +235,13 @@ async def _run(
             config, on_partial=on_partial, on_final=on_final
         )
         capture = make_capture_fn(config)
-        is_local = config.engine == "local"
         from obs_captions.vad import SileroVad, UtteranceSegmenter
-        vad_threshold = config.local.vad_threshold if is_local else 0.5
-        min_silence_ms = config.local.min_silence_ms if is_local else 500
-        vad = SileroVad(threshold=vad_threshold)
+        vad_params = _resolve_vad_params(config)
+        vad = SileroVad(threshold=vad_params.threshold)
         segmenter = UtteranceSegmenter(
             vad=vad,
-            frame_ms=100,
-            min_silence_ms=min_silence_ms,
+            frame_ms=vad_params.frame_ms,
+            min_silence_ms=vad_params.min_silence_ms,
         )
 
         controller = None
