@@ -10,6 +10,7 @@ from collections import Counter
 import pytest
 
 from obs_captions.ipc.framing import (
+    Control,
     MsgType,
     StatusCode,
     FrameDecoder,
@@ -553,6 +554,96 @@ async def test_ipc_sidecar_control_stop_dispatches_and_resets_runtime_state(monk
     assert runtime._session_has_context is False
     assert runtime._pending_hello_epoch is None
     assert runtime._session_ready.is_set() is False
-    assert runtime._control_slots[CONTROL_STOP] is None
+    assert runtime._control.slots[CONTROL_STOP] is None
     assert start_counter == [1]
     assert stop_counter == [1]
+
+
+# --- Control state-machine characterization (supersede / ack / inflight) ---
+#
+# These lock the exact supersede/ack/inflight-collision transitions of the
+# control queue. They probe the state machine directly (deterministic, no loop
+# timing) via the accessors below so the same behavioral assertions survive the
+# ControlDispatcher extraction unchanged — only the plumbing helpers move.
+
+
+def _new_control_runtime(tmp_path) -> SidecarRuntime:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+    return SidecarRuntime(
+        config_path=str(cfg),
+        stdin_reader=_build_input(b""),
+        writer=FakeTransportWriter(),
+        max_audio_queue=16,
+        max_out_queue=64,
+        offload_feed_audio=False,
+    )
+
+
+def _drain_status_codes(runtime: SidecarRuntime) -> list[tuple[int, StatusCode]]:
+    frames = list(runtime._out_queue)
+    runtime._out_queue.clear()
+    return [
+        (payload.ack_seq, payload.code)
+        for msg_type, payload in _decode_frames(frames)
+        if msg_type == MsgType.STATUS
+    ]
+
+
+def _ctl_enqueue(runtime: SidecarRuntime, command: int, seq: int, arg: str = "") -> None:
+    runtime._control.enqueue(Control(command=command, seq=seq, arg=arg))
+
+
+def _ctl_set_inflight(runtime: SidecarRuntime, command: int, seq: int) -> None:
+    runtime._control.inflight[command] = seq
+
+
+def _ctl_set_last_seq(runtime: SidecarRuntime, command: int, seq: int) -> None:
+    runtime._control.last_seq[command] = seq
+
+
+def _ctl_slot(runtime: SidecarRuntime, command: int):
+    return runtime._control.slots[command]
+
+
+def test_ipc_control_inflight_collision_acks_same_seq_and_supersedes_other(tmp_path):
+    runtime = _new_control_runtime(tmp_path)
+    runtime._session_has_context = True
+    _ctl_set_inflight(runtime, CONTROL_START, 5)
+
+    _ctl_enqueue(runtime, CONTROL_START, 5)  # same seq while inflight -> ack
+    _ctl_enqueue(runtime, CONTROL_START, 6)  # different seq while inflight -> superseded
+
+    codes = _drain_status_codes(runtime)
+    assert (5, StatusCode.OK) in codes
+    assert (6, StatusCode.CANCELLED) in codes
+    # inflight command is never queued into the slot
+    assert _ctl_slot(runtime, CONTROL_START) is None
+
+
+def test_ipc_control_slot_supersede_and_last_seq_gate(tmp_path):
+    runtime = _new_control_runtime(tmp_path)
+    runtime._session_has_context = True
+
+    # newer seq replaces the queued (not-yet-drained) slot -> older is cancelled
+    _ctl_enqueue(runtime, CONTROL_START, 1)
+    _ctl_enqueue(runtime, CONTROL_START, 2)
+    codes = _drain_status_codes(runtime)
+    assert (1, StatusCode.CANCELLED) in codes
+    assert _ctl_slot(runtime, CONTROL_START).seq == 2
+
+    # last completed seq: equal -> ack, older -> superseded
+    _ctl_set_last_seq(runtime, CONTROL_STOP, 9)
+    _ctl_enqueue(runtime, CONTROL_STOP, 9)
+    _ctl_enqueue(runtime, CONTROL_STOP, 8)
+    codes = _drain_status_codes(runtime)
+    assert (9, StatusCode.OK) in codes
+    assert (8, StatusCode.CANCELLED) in codes
+
+
+def test_ipc_control_without_session_context_reports_no_session(tmp_path):
+    runtime = _new_control_runtime(tmp_path)
+    # _session_has_context defaults to False
+    _ctl_enqueue(runtime, CONTROL_FLUSH, 3)
+    codes = _drain_status_codes(runtime)
+    assert (3, StatusCode.NO_SESSION) in codes
