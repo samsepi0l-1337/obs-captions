@@ -30,6 +30,23 @@ def test_silero_vad_is_speech_uses_stubbed_model_threshold():
     assert vad.is_speech(frame()) is True
 
 
+def test_silero_vad_real_model_reports_silence_as_not_speech():
+    import pytest
+
+    pytest.importorskip("torch")
+    pytest.importorskip("torchaudio")
+    pytest.importorskip("onnxruntime")
+    pytest.importorskip("silero_vad")
+
+    import obs_captions.vad as vad_module
+
+    # Exercise the real dependency chain so CI catches local-VAD ABI skew before users do.
+    vad = SileroVad(model=vad_module._load_silero_onnx_model())
+    silence = float32_to_pcm16(np.zeros(512, dtype=np.float32))
+
+    assert vad.is_speech(silence) is False
+
+
 def test_utterance_segmenter_yields_boundary_after_min_silence():
     vad = SileroVad(model=FakeModel([0.9, 0.8, 0.1, 0.1, 0.9]), threshold=0.5, window_size=1600)
     segmenter = UtteranceSegmenter(vad=vad, frame_ms=100, min_silence_ms=200)
